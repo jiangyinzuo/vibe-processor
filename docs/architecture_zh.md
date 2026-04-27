@@ -2,8 +2,8 @@
 
 ## 项目简介
 
-本项目是一个出于教学目的的简化版昇腾 (Ascend) NPU 实现，使用 SystemVerilog 编写 RTL，
-Verilator 进行仿真，cocotb/pytest 编写验证测试。
+本项目是一个出于教学目的的简化版昇腾 (Ascend) NPU 实现，使用 Chisel 7 (Scala) 编写硬件描述，
+通过 svsim + Verilator 进行仿真，ScalaTest 编写验证测试。可通过 CIRCT/firtool 生成 SystemVerilog。
 
 项目展示了 AI 加速器的核心工作原理：
 - 收缩阵列 (Systolic Array) 如何高效完成矩阵乘法
@@ -15,28 +15,28 @@ Verilator 进行仿真，cocotb/pytest 编写验证测试。
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                       toy_ascend_top                            │
+│                       ToyAscendTop                              │
 │                                                                 │
 │  ┌──────────────────────┐    ┌──────────────────────────────┐   │
-│  │   Instruction Memory  │    │      Unified Buffer          │   │
-│  │   256 × 32-bit        │    │   1024 × 128-bit 双端口 SRAM │   │
-│  │                       │    │                              │   │
-│  │  load_en ──►  [IMEM]  │    │  Port A ◄──► AI Core         │   │
-│  │  load_addr    addr ◄──┤    │  Port B ◄──► 外部接口(测试)  │   │
-│  │  load_data    instr ──┤    │                              │   │
+│  │     InstrMem          │    │      UnifiedBuffer           │   │
+│  │   256 × 32-bit        │    │   1024 × 128-bit (SyncReadMem)│  │
+│  │   Mem (组合读)        │    │                              │   │
+│  │  loadEn ──►  [IMEM]   │    │  Port A ◄──► AI Core         │   │
+│  │  loadAddr   addr ◄──┤    │  Port B ◄──► 外部接口(测试)  │   │
+│  │  loadData   instr ──┤    │                              │   │
 │  └───────────────────────┘    └──────────────────────────────┘   │
 │              │                          ▲                        │
 │              ▼                          │                        │
 │  ┌──────────────────────────────────────┴─────────────────────┐  │
-│  │                        AI Core                             │  │
+│  │                        AiCore                              │  │
 │  │                                                            │  │
 │  │  ┌────────────────────────────────────────────────────┐    │  │
-│  │  │                  Scalar Unit                        │    │  │
+│  │  │                  ScalarUnit                         │    │  │
 │  │  │  ┌───────┐  ┌────────┐  ┌──────────────────────┐   │    │  │
 │  │  │  │  PC   │─►│ DECODE │─►│    Execution FSM     │   │    │  │
 │  │  │  └───────┘  └────────┘  │                      │   │    │  │
 │  │  │                         │  FETCH → DECODE →     │   │    │  │
-│  │  │                         │  EXEC_LOAD / MATMUL / │   │    │  │
+│  │  │                         │  LOAD / MATMUL /      │   │    │  │
 │  │  │                         │  VECADD / HALT        │   │    │  │
 │  │  │                         └──────────────────────┘   │    │  │
 │  │  └──────┬──────────────┬──────────────────────────────┘    │  │
@@ -44,16 +44,16 @@ Verilator 进行仿真，cocotb/pytest 编写验证测试。
 │  │    start/done     start/done                               │  │
 │  │         │              │                                   │  │
 │  │  ┌──────▼──────┐  ┌───▼────────────┐                      │  │
-│  │  │  Cube Unit  │  │  Vector Unit   │                      │  │
+│  │  │  CubeUnit   │  │  VectorUnit    │                      │  │
 │  │  │             │  │                │                      │  │
-│  │  │  weight_buf │  │  VECADD: a+b   │                      │  │
-│  │  │  act_buf    │  │  RELU: max(0,x)│                      │  │
+│  │  │  weightBuf  │  │  VECADD: a+b   │                      │  │
+│  │  │  actBuf     │  │  RELU: max(0,x)│                      │  │
 │  │  │      │      │  │                │                      │  │
 │  │  │      ▼      │  │  单周期执行     │                      │  │
 │  │  │  Systolic   │  └────────────────┘                      │  │
 │  │  │  Array 4×4  │                                          │  │
 │  │  │             │                                          │  │
-│  │  │  result_buf │                                          │  │
+│  │  │  resultReg  │                                          │  │
 │  │  └─────────────┘                                          │  │
 │  └────────────────────────────────────────────────────────────┘  │
 │                                                                 │
@@ -69,24 +69,27 @@ Verilator 进行仿真，cocotb/pytest 编写验证测试。
 ### PE (处理单元) 内部结构
 
 ```
-            data_in (激活值)
+            dataIn (激活值)
                │
                ▼
          ┌───────────┐
          │           │
-psum_in ─►  weight   ├─► psum_out = psum_in + weight × data_in
+psumIn ──►  weight   ├──► psumOut = psumIn + weight × dataIn
          │  (固定)   │
          │           │
          └─────┬─────┘
                │
                ▼
-            data_out (传递给下一个 PE)
+            dataOut (传递给下一个 PE)
 ```
 
-每个 PE 包含：
-- 一个权重寄存器 `weight_reg`（加载后固定不变）
-- 一个 MAC 运算：`psum_out = psum_in + weight_reg × data_in`
-- 数据直通：`data_out = data_in`（延迟 1 个时钟周期）
+Chisel 实现（`PE.scala`）：
+```scala
+val weightReg = RegInit(0.S(dw.W))
+when(io.weightLoad) { weightReg := io.weightIn }
+io.dataOut := RegNext(io.dataIn, 0.S)
+io.psumOut := RegNext(io.psumIn + weightReg * io.dataIn, 0.S)
+```
 
 ### 4×4 阵列拓扑
 
@@ -97,34 +100,36 @@ psum_in ─►  weight   ├─► psum_out = psum_in + weight × data_in
   psum=0    psum=0    psum=0    psum=0
     ↓         ↓         ↓         ↓
   ┌─────┐  ┌─────┐  ┌─────┐  ┌─────┐
- →│W₀₀  │→│W₀₁  │→│W₀₂  │→│W₀₃  │→  act_in[0]: A[i][0]
+ →│W₀₀  │→│W₀₁  │→│W₀₂  │→│W₀₃  │→  actIn(0): A[i][0]
   └──┬──┘  └──┬──┘  └──┬──┘  └──┬──┘
      ↓        ↓        ↓        ↓
   ┌─────┐  ┌─────┐  ┌─────┐  ┌─────┐
- →│W₁₀  │→│W₁₁  │→│W₁₂  │→│W₁₃  │→  act_in[1]: A[i][1]
+ →│W₁₀  │→│W₁₁  │→│W₁₂  │→│W₁₃  │→  actIn(1): A[i][1]
   └──┬──┘  └──┬──┘  └──┬──┘  └──┬──┘
      ↓        ↓        ↓        ↓
   ┌─────┐  ┌─────┐  ┌─────┐  ┌─────┐
- →│W₂₀  │→│W₂₁  │→│W₂₂  │→│W₂₃  │→  act_in[2]: A[i][2]
+ →│W₂₀  │→│W₂₁  │→│W₂₂  │→│W₂₃  │→  actIn(2): A[i][2]
   └──┬──┘  └──┬──┘  └──┬──┘  └──┬──┘
      ↓        ↓        ↓        ↓
   ┌─────┐  ┌─────┐  ┌─────┐  ┌─────┐
- →│W₃₀  │→│W₃₁  │→│W₃₂  │→│W₃₃  │→  act_in[3]: A[i][3]
+ →│W₃₀  │→│W₃₁  │→│W₃₂  │→│W₃₃  │→  actIn(3): A[i][3]
   └──┬──┘  └──┬──┘  └──┬──┘  └──┬──┘
      ↓        ↓        ↓        ↓
   C[i][0]  C[i][1]  C[i][2]  C[i][3]
 ```
 
-计算原理：
-- PE[k][j] 固定存储权重 W[k][j]
-- 激活值 A[i][k] 从第 k 行左侧注入，向右传递
-- 部分和从顶部（初始为 0）向下累加
-- 底部输出 psum_v[4][j] = Σ_k A[i][k] × W[k][j] = C[i][j]
+Chisel 中用二维 `Array.tabulate` 生成 PE 阵列：
+```scala
+val pes = Array.tabulate(n, n)((_, _) => Module(new PE(dw, aw)))
+for (k <- 0 until n; j <- 0 until n) {
+  pes(k)(j).io.dataIn  := actH(k)(j)
+  actH(k)(j + 1)       := pes(k)(j).io.dataOut
+  pes(k)(j).io.psumIn  := psumV(k)(j)
+  psumV(k + 1)(j)      := pes(k)(j).io.psumOut
+}
+```
 
 ### Skewed Feeding (斜向注入)
-
-为了让所有对 C[i][j] 有贡献的乘积在正确的时刻到达对应 PE，
-激活值需要按行错开注入（skewing）：
 
 ```
 时钟周期:    0       1       2       3       4       5       6
@@ -139,7 +144,7 @@ Row 3 输入:   0       0       0     A[0][3] A[1][3] A[2][3] A[3][3]
 
 ### 结果捕获时序
 
-由于 PE 的流水线延迟，C[i][j] 在绝对周期 `i + j + N` 时出现在底部：
+C[i][j] 在绝对周期 `i + j + N` 时出现在底部：
 
 ```
 周期:  4    5    6    7    8    9    10
@@ -152,15 +157,15 @@ Row 3 输入:   0       0       0     A[0][3] A[1][3] A[2][3] A[3][3]
 ## 模块层次
 
 ```
-toy_ascend_top
-├── instr_mem                    指令存储器 (256 × 32-bit)
-├── unified_buffer               统一缓存 (1024 × 128-bit, 双端口)
-└── ai_core
-    ├── scalar_unit              标量单元 (取指/译码/控制 FSM)
-    ├── cube_unit                矩阵运算单元
-    │   └── systolic_array       4×4 收缩阵列
-    │       └── pe [4][4]        16 个处理单元
-    └── vector_unit              向量运算单元 (VECADD / RELU)
+ToyAscendTop
+├── InstrMem                     指令存储器 (Mem, 256 × 32-bit, 组合读)
+├── UnifiedBuffer                统一缓存 (SyncReadMem, 1024 × 128-bit, 双端口)
+└── AiCore
+    ├── ScalarUnit               标量单元 (取指/译码/控制 FSM, 11 状态)
+    ├── CubeUnit                 矩阵运算单元
+    │   └── SystolicArray        4×4 收缩阵列
+    │       └── PE [4][4]        16 个处理单元
+    └── VectorUnit               向量运算单元 (VECADD / RELU)
 ```
 
 ## 指令集
@@ -189,7 +194,7 @@ N-type (NOP, HALT):
 M-type (LOAD, STORE):
 ┌──────────┬────────┬──────────┬─────────────────┬────────┐
 │ [31:28]  │[27:26] │ [25:20]  │ [19:4]          │ [3:0]  │
-│ opcode   │buf_sel │ reg_addr │ mem_addr        │ size   │
+│ opcode   │buf_sel │ reg_addr │ mem_addr         │ size   │
 └──────────┴────────┴──────────┴─────────────────┴────────┘
   buf_sel: 00=L0_A(权重) 01=L0_B(激活) 10=L0_C(结果) 11=VEC
 
@@ -206,18 +211,18 @@ V-type (VECADD, RELU):
 └──────────┴────────┴────────┴────────┴──────────┘
 ```
 
-## Scalar Unit 执行流程
+## ScalarUnit 执行流程
 
-Scalar Unit 是整个 AI Core 的控制中心，采用顺序执行的 FSM：
+ScalarUnit 是整个 AiCore 的控制中心，采用顺序执行的 FSM（11 个状态）：
 
 ```
          ┌──────┐
-         │ IDLE │◄──── rst_n / 完成
+         │ IDLE │◄──── rst / 完成
          └──┬───┘
      start  │
             ▼
          ┌──────┐
-    ┌───►│FETCH │ ◄─── PC 指向指令存储器
+    ┌───►│FETCH │ ◄─── PC 指向 InstrMem
     │    └──┬───┘
     │       │
     │       ▼
@@ -228,17 +233,17 @@ Scalar Unit 是整个 AI Core 的控制中心，采用顺序执行的 FSM：
     │       ├── NOP ──────────────────────► PC++ ──┐
     │       ├── HALT ─────────────────────► HALTED │
     │       │                                      │
-    │       ├── LOAD ──► LOAD_0 → LOAD_1 → LOAD_2 ┤ (循环 N 行)
-    │       │            发起UB读  等待数据  存入缓存│
+    │       ├── LOAD ──► LOAD0 → LOAD1 → LOAD2 ───┤ (循环 N 行)
+    │       │            发起UB读  保持addr  存入缓存│
     │       │                                      │
-    │       ├── STORE ─► STORE_0 → STORE_1 ────────┤ (循环 N 行)
+    │       ├── STORE ─► STORE0 → STORE1 ──────────┤ (循环 N 行)
     │       │            写入UB    下一行           │
     │       │                                      │
-    │       ├── MATMUL ► EXEC_MATMUL ──────────────┤ (等待 cube_done)
-    │       │            启动Cube单元               │
+    │       ├── MATMUL ► MATMUL ───────────────────┤ (等待 cubeDone)
+    │       │            启动CubeUnit               │
     │       │                                      │
-    │       └── VEC ───► EXEC_VEC ─────────────────┤ (等待 vec_done)
-    │                    启动Vector单元             │
+    │       └── VEC ───► VEC ──────────────────────┤ (等待 vecDone)
+    │                    启动VectorUnit             │
     │                                              │
     └──────────────────────────────────────────────┘
 ```
@@ -249,41 +254,39 @@ Scalar Unit 是整个 AI Core 的控制中心，采用顺序执行的 FSM：
 
 ```
 1. LOAD L0_B (激活矩阵 A)
-   UB[0] ──read──► Scalar Unit ──pack──► act_buf[row 0]
-   UB[1] ──read──► Scalar Unit ──pack──► act_buf[row 1]
-   UB[2] ──read──► Scalar Unit ──pack──► act_buf[row 2]
-   UB[3] ──read──► Scalar Unit ──pack──► act_buf[row 3]
+   UB[0] ──SyncReadMem──► ScalarUnit ──pack──► actBuf(0)
+   UB[1] ──SyncReadMem──► ScalarUnit ──pack──► actBuf(1)
+   UB[2] ──SyncReadMem──► ScalarUnit ──pack──► actBuf(2)
+   UB[3] ──SyncReadMem──► ScalarUnit ──pack──► actBuf(3)
 
 2. LOAD L0_A (权重矩阵 W)
-   UB[4] ──read──► Scalar Unit ──pack──► weight_buf[row 0]
-   UB[5] ──read──► Scalar Unit ──pack──► weight_buf[row 1]
-   UB[6] ──read──► Scalar Unit ──pack──► weight_buf[row 2]
-   UB[7] ──read──► Scalar Unit ──pack──► weight_buf[row 3]
+   UB[4] ──SyncReadMem──► ScalarUnit ──pack──► weightBuf(0)
+   ...
 
 3. MATMUL
-   weight_buf ──────────────────────────► Cube Unit ──► 加载权重到 PE
-   act_buf ──► Cube Unit (skewing) ────► Systolic Array ──► 逐周期注入
+   weightBuf ──────────────────────────► CubeUnit ──► 加载权重到 PE
+   actBuf ──► CubeUnit (skewing) ────► SystolicArray ──► 逐周期注入
                                                               │
-   result_buf ◄──────────────────────────────────────── 底部捕获结果
+   resultReg ◄──────────────────────────────────────── 底部捕获结果
 
 4. STORE L0_C (结果矩阵 C)
-   cube_result[row 0] ──► Scalar Unit ──write──► UB[8]
-   cube_result[row 1] ──► Scalar Unit ──write──► UB[9]
-   cube_result[row 2] ──► Scalar Unit ──write──► UB[10]
-   cube_result[row 3] ──► Scalar Unit ──write──► UB[11]
+   cubeResult(0) ──► ScalarUnit ──write──► UB[8]
+   cubeResult(1) ──► ScalarUnit ──write──► UB[9]
+   cubeResult(2) ──► ScalarUnit ──write──► UB[10]
+   cubeResult(3) ──► ScalarUnit ──write──► UB[11]
 ```
 
 ## 关键设计参数
 
 | 参数           | 值       | 说明                          |
 |----------------|----------|-------------------------------|
-| DATA_WIDTH     | 8 bit    | 输入数据精度 (INT8)           |
-| ACC_WIDTH      | 32 bit   | 累加器精度 (INT32)            |
-| ARRAY_SIZE     | 4        | 收缩阵列维度 (4×4)           |
-| UB_DEPTH       | 1024     | Unified Buffer 深度           |
-| UB 字宽        | 128 bit  | 每地址存储 4 个 INT32 值      |
-| IMEM_DEPTH     | 256      | 指令存储器深度                |
-| INSTR_WIDTH    | 32 bit   | 指令宽度                      |
+| DataWidth      | 8 bit    | 输入数据精度 (INT8)           |
+| AccWidth       | 32 bit   | 累加器精度 (INT32)            |
+| ArraySize      | 4        | 收缩阵列维度 (4×4)           |
+| UBDepth        | 1024     | Unified Buffer 深度           |
+| UB 字宽        | 128 bit  | Vec(4, SInt(32.W))            |
+| IMEMDepth      | 256      | 指令存储器深度                |
+| InstrWidth     | 32 bit   | 指令宽度                      |
 | MATMUL 延迟    | ~15 周期 | 含权重加载+注入+排空          |
 
 ## 与真实昇腾的对比
@@ -297,65 +300,45 @@ Scalar Unit 是整个 AI Core 的控制中心，采用顺序执行的 FSM：
 | 指令集       | 7 条指令                     | 数百条指令, 支持流水线        |
 | AI Core 数量 | 1 个                         | 2~32 个, 支持并行             |
 | 数据流       | Weight-Stationary            | 多种数据流模式                |
-| 时钟频率     | 仿真                         | ~1 GHz                        |
-
-## 示例程序
-
-```asm
-; 计算 C = A × W
-; UB 布局: A 在地址 0-3, W 在地址 4-7, 结果写入 8-11
-
-LOAD  L0_B, 0, 0     ; 从 UB[0..3] 加载激活矩阵 A
-LOAD  L0_A, 0, 4     ; 从 UB[4..7] 加载权重矩阵 W
-MATMUL                ; 执行矩阵乘法 C = A × W
-STORE L0_C, 0, 8     ; 将结果 C 存回 UB[8..11]
-HALT                  ; 停机
-```
+| 实现语言     | Chisel 7 (Scala)             | 商业 EDA 工具链               |
 
 ## 构建与测试
 
 ```bash
-make test          # 运行全部 13 个测试用例
-make test_pe       # 仅测试 PE 单元
-make test_systolic # 仅测试收缩阵列
-make test_vector   # 仅测试 Vector 单元
-make test_cube     # 仅测试 Cube 单元
-make test_integration  # 运行集成测试 (完整程序执行)
-make clean         # 清理构建产物
+sbt test                              # 运行全部 13 个测试用例
+sbt "testOnly ascend.PETest"          # 仅测试 PE 单元
+sbt "testOnly ascend.SystolicArrayTest" # 仅测试收缩阵列
+sbt "testOnly ascend.VectorUnitTest"  # 仅测试 Vector 单元
+sbt "testOnly ascend.CubeUnitTest"    # 仅测试 Cube 单元
+sbt "testOnly ascend.IntegrationTest" # 运行集成测试 (完整程序执行)
+sbt "runMain ascend.Elaborate"        # 生成 SystemVerilog 到 generated/
 ```
 
 ## 项目结构
 
 ```
 vibe-processor/
-├── Makefile                         顶层构建脚本
-├── rtl/
-│   ├── pkg/ascend_pkg.sv            全局参数与类型定义
-│   ├── cube/
-│   │   ├── pe.sv                    处理单元 (MAC + 寄存器)
-│   │   └── systolic_array.sv        4×4 Weight-Stationary 收缩阵列
-│   ├── memory/
-│   │   ├── l0_buffer.sv             L0 缓存 (单端口 SRAM)
-│   │   ├── unified_buffer.sv        统一缓存 (双端口 SRAM)
-│   │   └── instr_mem.sv             指令存储器
-│   ├── core/
-│   │   ├── scalar_unit.sv           标量单元 (取指/译码/控制)
-│   │   ├── cube_unit.sv             Cube 单元 (封装收缩阵列)
-│   │   ├── vector_unit.sv           向量单元 (VECADD/RELU)
-│   │   └── ai_core.sv              AI Core (集成三个执行单元)
-│   └── top/
-│       └── toy_ascend_top.sv        芯片顶层
-├── tb/
-│   ├── test_pe/                     PE 单元测试 (3 cases)
-│   ├── test_systolic/               收缩阵列测试 (3 cases, numpy 验证)
-│   ├── test_vector/                 Vector 单元测试 (3 cases)
-│   ├── test_cube/                   Cube 单元测试 (2 cases)
-│   └── test_integration/            集成测试 (2 cases, 完整程序执行)
-├── tools/
-│   └── asm.py                       简易汇编器
-├── programs/
-│   └── matmul_simple.asm            示例程序
+├── build.sbt                              sbt 构建配置 (Chisel 7.9.0)
+├── src/
+│   ├── main/scala/ascend/
+│   │   ├── AscendParams.scala             全局参数
+│   │   ├── PE.scala                       处理单元 (MAC + 寄存器)
+│   │   ├── SystolicArray.scala            4×4 Weight-Stationary 收缩阵列
+│   │   ├── CubeUnit.scala                 Cube 单元 (封装收缩阵列 + skewing)
+│   │   ├── VectorUnit.scala               向量单元 (VECADD / RELU)
+│   │   ├── ScalarUnit.scala               标量单元 (取指/译码/控制 FSM)
+│   │   ├── Memory.scala                   UnifiedBuffer + InstrMem
+│   │   ├── AiCore.scala                   AI Core (集成三个执行单元)
+│   │   ├── ToyAscendTop.scala             芯片顶层
+│   │   └── Elaborate.scala                Verilog 生成入口
+│   └── test/scala/ascend/
+│       ├── PETest.scala                   PE 单元测试 (3 cases)
+│       ├── SystolicArrayTest.scala        收缩阵列测试 (3 cases)
+│       ├── VectorUnitTest.scala           Vector 单元测试 (3 cases)
+│       ├── CubeUnitTest.scala             Cube 单元测试 (2 cases)
+│       └── IntegrationTest.scala          集成测试 (2 cases, 完整程序执行)
+├── generated/                             生成的 SystemVerilog (sbt runMain)
 └── docs/
-    ├── isa.md                       指令集参考 (英文)
-    └── architecture_zh.md           架构文档 (本文件)
+    ├── isa.md                             指令集参考 (英文)
+    └── architecture_zh.md                 架构文档 (本文件)
 ```

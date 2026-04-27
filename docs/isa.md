@@ -4,6 +4,8 @@
 
 7 instructions, 32-bit fixed-width encoding, 4-bit opcode.
 
+Implemented in Chisel 7 (Scala). Verilog can be generated via `sbt "runMain ascend.Elaborate"`.
+
 ## Instruction Encoding
 
 ### N-type (NOP, HALT)
@@ -39,7 +41,7 @@ Result stored internally, accessible via STORE L0_C.
 | 0001 | 0x1 | HALT | Stop execution |
 | 0010 | 0x2 | LOAD | Transfer N rows from UB to internal buffer |
 | 0011 | 0x3 | STORE | Transfer N rows from internal buffer to UB |
-| 0100 | 0x4 | MATMUL | 4x4 matrix multiply C = A * W (INT8→INT32) |
+| 0100 | 0x4 | MATMUL | 4x4 matrix multiply C = A * W (INT8 -> INT32) |
 | 0101 | 0x5 | VECADD | Vector addition (4-wide, 32-bit) |
 | 0110 | 0x6 | RELU | ReLU activation: max(0, x) |
 
@@ -48,16 +50,13 @@ Result stored internally, accessible via STORE L0_C.
 - 4x4 weight-stationary systolic array (INT8 multiply, INT32 accumulate)
 - Scalar Unit: sequential instruction execution FSM
 - Vector Unit: single-cycle VECADD/RELU
-- Unified Buffer: 1024 x 128-bit dual-port SRAM
-- Instruction Memory: 256 x 32-bit
+- Unified Buffer: 1024 x 128-bit dual-port SyncReadMem
+- Instruction Memory: 256 x 32-bit combinational-read Mem
 
-## Example Program
+## Build & Test
 
-```asm
-; C = A * W
-LOAD  L0_B, 0, 0     ; Load A from UB[0..3]
-LOAD  L0_A, 0, 4     ; Load W from UB[4..7]
-MATMUL                ; Compute C = A * W
-STORE L0_C, 0, 8     ; Store C to UB[8..11]
-HALT
+```bash
+sbt test                          # Run all 13 tests
+sbt "testOnly ascend.PETest"      # Run PE unit tests only
+sbt "runMain ascend.Elaborate"    # Generate SystemVerilog to generated/
 ```

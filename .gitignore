@@ -4,3 +4,13 @@ sim_build/
 results.xml
 *.vcd
 *.fst
+
+# sbt / Scala
+target/
+project/target/
+project/project/
+.bsp/
+.metals/
+.bloop/
+generated/
+build/

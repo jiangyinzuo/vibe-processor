@@ -1,1 +1,1 @@
-SystemVerilog + Verilator + cocotb/pytest
+Chisel 7 (Scala) + Verilator (via svsim) + ScalaTest
