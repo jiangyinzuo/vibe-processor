@@ -1,0 +1,98 @@
+direction: down
+
+title: |md
+  # 昇腾 NPU — 多核架构 (2×AiCore)
+|
+
+HBM: HBM\n(片外 LatencyMem\n4096×128b, 延迟=10) {
+  shape: cylinder
+  style.fill: "#FFCDD2"
+}
+
+L2: L2 Buffer\n(片上共享 Mem\n2048×128b) {
+  shape: cylinder
+  style.fill: "#FFF9C4"
+}
+
+HBM -> L2: 外部预加载
+
+imem: InstrMem\n(共享 256×32b) {
+  shape: page
+  style.fill: "#E3F2FD"
+}
+
+core0: AiCore 0 {
+  style.fill: "#E8F5E9"
+
+  scalar: ScalarUnit\n(12态 FSM) {
+    style.fill: "#FFCCBC"
+  }
+
+  dma: DMA (L2-UB) {
+    shape: parallelogram
+    style.fill: "#FFE0B2"
+  }
+
+  ub: "UB₀ (私有 256×128b)" {
+    shape: cylinder
+    style.fill: "#FFF9C4"
+  }
+
+  cube: CubeUnit {
+    style.fill: "#FFF3E0"
+    sa: "SystolicArray 4×4 PE" {
+      style.fill: "#FFE0B2"
+    }
+  }
+
+  vec: "VectorUnit (VECADD/RELU)" {
+    style.fill: "#D1C4E9"
+  }
+
+  scalar -> dma: DMA指令
+  dma -> ub
+  scalar -> ub: LOAD/STORE
+  scalar -> cube.sa: MATMUL
+  scalar -> vec: VECADD/RELU
+}
+
+core1: AiCore 1 {
+  style.fill: "#E8F5E9"
+
+  scalar: ScalarUnit {
+    style.fill: "#FFCCBC"
+  }
+
+  dma: DMA (L2-UB) {
+    shape: parallelogram
+    style.fill: "#FFE0B2"
+  }
+
+  ub: "UB₁ (私有 256×128b)" {
+    shape: cylinder
+    style.fill: "#FFF9C4"
+  }
+
+  cube: CubeUnit {
+    style.fill: "#FFF3E0"
+    sa: "SystolicArray 4×4 PE" {
+      style.fill: "#FFE0B2"
+    }
+  }
+
+  vec: VectorUnit {
+    style.fill: "#D1C4E9"
+  }
+
+  scalar -> dma: DMA指令
+  dma -> ub
+  scalar -> ub: LOAD/STORE
+  scalar -> cube.sa: MATMUL
+  scalar -> vec: VECADD/RELU
+}
+
+imem -> core0.scalar: instr
+imem -> core1.scalar: instr
+
+L2 -> core0.dma: "Core 0 切片 [0..1023]"
+L2 -> core1.dma: "Core 1 切片 [1024..2047]"

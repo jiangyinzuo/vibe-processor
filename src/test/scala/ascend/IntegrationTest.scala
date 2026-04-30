@@ -8,25 +8,19 @@ class IntegrationTest extends AnyFunSpec with ChiselSim {
 
   val N = AscendParams.ArraySize
 
-  /** Encode a LOAD instruction. */
-  def encLoad(bufSel: Int, memAddr: Int): Int =
-    (0x2 << 28) | ((bufSel & 0x3) << 26) | ((memAddr & 0xFFFF) << 4)
+  def encLoad(bufSel: Int, memAddr: Int): Long =
+    (0x2L << 28) | ((bufSel & 0x3).toLong << 26) | ((memAddr & 0xFFFF).toLong << 4)
+  def encStore(bufSel: Int, memAddr: Int): Long =
+    (0x3L << 28) | ((bufSel & 0x3).toLong << 26) | ((memAddr & 0xFFFF).toLong << 4)
+  def encDmaLoad(ubBase: Int, l2Base: Int): Long =
+    (0x8L << 28) | ((ubBase & 0xFF).toLong << 20) | ((l2Base & 0xFFFF).toLong << 4)
+  def encDmaStore(ubBase: Int, l2Base: Int): Long =
+    (0x9L << 28) | ((ubBase & 0xFF).toLong << 20) | ((l2Base & 0xFFFF).toLong << 4)
+  def encMatmul: Long = 0x4L << 28
+  def encNop: Long    = 0x0L
+  def encHalt: Long   = 0x1L << 28
 
-  /** Encode a STORE instruction. */
-  def encStore(bufSel: Int, memAddr: Int): Int =
-    (0x3 << 28) | ((bufSel & 0x3) << 26) | ((memAddr & 0xFFFF) << 4)
-
-  /** Encode MATMUL. */
-  def encMatmul: Int = 0x4 << 28
-
-  /** Encode NOP. */
-  def encNop: Int = 0x0
-
-  /** Encode HALT. */
-  def encHalt: Int = 0x1 << 28
-
-  /** Load program into instruction memory. */
-  def loadProgram(dut: ToyAscendTop, instrs: Seq[Int]): Unit = {
+  def loadProgram(dut: ToyAscendTop, instrs: Seq[Long]): Unit = {
     for ((instr, i) <- instrs.zipWithIndex) {
       dut.io.imemLoadEn.poke(true.B)
       dut.io.imemLoadAddr.poke(i.U)
@@ -37,61 +31,64 @@ class IntegrationTest extends AnyFunSpec with ChiselSim {
     dut.clock.step()
   }
 
-  /** Write a row of N int values to UB at given address. */
-  def writeUB(dut: ToyAscendTop, addr: Int, row: Array[Int]): Unit = {
-    dut.io.ubExt.en.poke(true.B)
-    dut.io.ubExt.we.poke(true.B)
-    dut.io.ubExt.addr.poke(addr.U)
-    for (j <- 0 until N) {
-      dut.io.ubExt.wdata(j).poke(row(j).S(32.W))
-    }
+  def writeL2(dut: ToyAscendTop, addr: Int, row: Array[Int]): Unit = {
+    dut.io.l2Ext.en.poke(true.B)
+    dut.io.l2Ext.we.poke(true.B)
+    dut.io.l2Ext.addr.poke(addr.U)
+    for (j <- 0 until N) dut.io.l2Ext.wdata(j).poke(row(j).S(32.W))
     dut.clock.step()
-    dut.io.ubExt.en.poke(false.B)
-    dut.io.ubExt.we.poke(false.B)
+    dut.io.l2Ext.en.poke(false.B)
+    dut.io.l2Ext.we.poke(false.B)
     dut.clock.step()
   }
 
-  /** Read a row of N int values from UB at given address. */
-  def readUB(dut: ToyAscendTop, addr: Int): Array[Int] = {
-    dut.io.ubExt.en.poke(true.B)
-    dut.io.ubExt.we.poke(false.B)
-    dut.io.ubExt.addr.poke(addr.U)
+  def readL2(dut: ToyAscendTop, addr: Int): Array[Int] = {
+    dut.io.l2Ext.en.poke(true.B)
+    dut.io.l2Ext.we.poke(false.B)
+    dut.io.l2Ext.addr.poke(addr.U)
     dut.clock.step()
-    dut.io.ubExt.en.poke(false.B)
+    dut.io.l2Ext.en.poke(false.B)
+    val result = Array.tabulate(N)(j => dut.io.l2Ext.rdata(j).peek().litValue.toInt)
     dut.clock.step()
-    Array.tabulate(N)(j => dut.io.ubExt.rdata(j).peek().litValue.toInt)
+    result
+  }
+
+  def initDut(dut: ToyAscendTop): Unit = {
+    dut.io.start.poke(false.B)
+    dut.io.imemLoadEn.poke(false.B)
+    dut.io.l2Ext.en.poke(false.B)
+    dut.io.l2Ext.we.poke(false.B)
+    dut.io.hbmExt.en.poke(false.B)
+    dut.io.hbmExt.we.poke(false.B)
+  }
+
+  def runToHalt(dut: ToyAscendTop, maxCycles: Int = 500): Int = {
+    dut.io.start.poke(true.B)
+    dut.clock.step()
+    dut.io.start.poke(false.B)
+    var cycles = 0
+    while (!dut.io.halted.peek().litToBoolean && cycles < maxCycles) {
+      dut.clock.step()
+      cycles += 1
+    }
+    assert(dut.io.halted.peek().litToBoolean, s"Did not halt within $maxCycles cycles")
+    dut.clock.step()
+    cycles
   }
 
   describe("Integration") {
 
     it("runs NOP + HALT program") {
       simulate(new ToyAscendTop) { dut =>
-        dut.io.start.poke(false.B)
-        dut.io.imemLoadEn.poke(false.B)
-        dut.io.ubExt.en.poke(false.B)
-        dut.io.ubExt.we.poke(false.B)
-
+        initDut(dut)
         loadProgram(dut, Seq(encNop, encHalt))
-
-        dut.io.start.poke(true.B)
-        dut.clock.step()
-        dut.io.start.poke(false.B)
-
-        var cycles = 0
-        while (!dut.io.halted.peek().litToBoolean && cycles < 50) {
-          dut.clock.step()
-          cycles += 1
-        }
-        assert(dut.io.halted.peek().litToBoolean, s"Did not halt within $cycles cycles")
+        runToHalt(dut)
       }
     }
 
-    it("runs LOAD -> MATMUL -> STORE and verifies C = A * W") {
+    it("runs DMA_LOAD -> LOAD -> MATMUL -> STORE -> DMA_STORE, verifies C = A * W") {
       simulate(new ToyAscendTop) { dut =>
-        dut.io.start.poke(false.B)
-        dut.io.imemLoadEn.poke(false.B)
-        dut.io.ubExt.en.poke(false.B)
-        dut.io.ubExt.we.poke(false.B)
+        initDut(dut)
 
         val a = Array(
           Array(1, 2, 3, 4), Array(5, 6, 7, 8),
@@ -105,38 +102,26 @@ class IntegrationTest extends AnyFunSpec with ChiselSim {
           (0 until N).map(k => a(i)(k) * w(k)(j)).sum
         )
 
-        // Program: LOAD act(L0_B) from UB[0..3], LOAD weight(L0_A) from UB[4..7],
-        //          MATMUL, STORE result(L0_C) to UB[8..11], HALT
+        // Preload L2 (core 0 slice: addr 0..7)
+        for (i <- 0 until N) writeL2(dut, i, a(i))
+        for (i <- 0 until N) writeL2(dut, 4 + i, w(i))
+
         val program = Seq(
-          encLoad(1, 0),  // LOAD L0_B, mem_addr=0
-          encLoad(0, 4),  // LOAD L0_A, mem_addr=4
+          encDmaLoad(ubBase = 0, l2Base = 0),   // L2[0..3] → UB[0..3]
+          encDmaLoad(ubBase = 4, l2Base = 4),   // L2[4..7] → UB[4..7]
+          encLoad(1, 0),                         // UB → act_buf
+          encLoad(0, 4),                         // UB → weight_buf
           encMatmul,
-          encStore(2, 8), // STORE L0_C, mem_addr=8
+          encStore(2, 8),                        // result → UB[8..11]
+          encDmaStore(ubBase = 8, l2Base = 8),  // UB[8..11] → L2[8..11]
           encHalt
         )
         loadProgram(dut, program)
+        val cycles = runToHalt(dut)
 
-        // Preload A into UB[0..3]
-        for (i <- 0 until N) writeUB(dut, i, a(i))
-        // Preload W into UB[4..7]
-        for (i <- 0 until N) writeUB(dut, 4 + i, w(i))
-
-        // Start execution
-        dut.io.start.poke(true.B)
-        dut.clock.step()
-        dut.io.start.poke(false.B)
-
-        // Wait for HALT
-        var cycles = 0
-        while (!dut.io.halted.peek().litToBoolean && cycles < 500) {
-          dut.clock.step()
-          cycles += 1
-        }
-        assert(dut.io.halted.peek().litToBoolean, s"Did not halt within $cycles cycles")
-
-        // Read results from UB[8..11]
+        // Read result from L2 (core 0 slice: addr 8..11)
         for (i <- 0 until N) {
-          val row = readUB(dut, 8 + i)
+          val row = readL2(dut, 8 + i)
           for (j <- 0 until N) {
             assert(row(j) == expected(i)(j),
               s"C[$i][$j]: got ${row(j)}, expected ${expected(i)(j)}")

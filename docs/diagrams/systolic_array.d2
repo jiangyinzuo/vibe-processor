@@ -1,0 +1,85 @@
+direction: right
+
+title: |md
+  # 4×4 Weight-Stationary 收缩阵列
+  C[i][j] = Σ A[i][k] × W[k][j]
+|
+
+act0: "actIn(0)" {
+  shape: parallelogram
+  style.fill: "#C8E6C9"
+}
+act1: "actIn(1)" {
+  shape: parallelogram
+  style.fill: "#C8E6C9"
+}
+act2: "actIn(2)" {
+  shape: parallelogram
+  style.fill: "#C8E6C9"
+}
+act3: "actIn(3)" {
+  shape: parallelogram
+  style.fill: "#C8E6C9"
+}
+
+pe00: "PE[0][0]\nW₀₀" {style.fill: "#FFE0B2"}
+pe01: "PE[0][1]\nW₀₁" {style.fill: "#FFE0B2"}
+pe02: "PE[0][2]\nW₀₂" {style.fill: "#FFE0B2"}
+pe03: "PE[0][3]\nW₀₃" {style.fill: "#FFE0B2"}
+pe10: "PE[1][0]\nW₁₀" {style.fill: "#FFE0B2"}
+pe11: "PE[1][1]\nW₁₁" {style.fill: "#FFE0B2"}
+pe12: "PE[1][2]\nW₁₂" {style.fill: "#FFE0B2"}
+pe13: "PE[1][3]\nW₁₃" {style.fill: "#FFE0B2"}
+pe20: "PE[2][0]\nW₂₀" {style.fill: "#FFE0B2"}
+pe21: "PE[2][1]\nW₂₁" {style.fill: "#FFE0B2"}
+pe22: "PE[2][2]\nW₂₂" {style.fill: "#FFE0B2"}
+pe23: "PE[2][3]\nW₂₃" {style.fill: "#FFE0B2"}
+pe30: "PE[3][0]\nW₃₀" {style.fill: "#FFE0B2"}
+pe31: "PE[3][1]\nW₃₁" {style.fill: "#FFE0B2"}
+pe32: "PE[3][2]\nW₃₂" {style.fill: "#FFE0B2"}
+pe33: "PE[3][3]\nW₃₃" {style.fill: "#FFE0B2"}
+
+res0: "C[i][0]" {
+  shape: parallelogram
+  style.fill: "#BBDEFB"
+}
+res1: "C[i][1]" {
+  shape: parallelogram
+  style.fill: "#BBDEFB"
+}
+res2: "C[i][2]" {
+  shape: parallelogram
+  style.fill: "#BBDEFB"
+}
+res3: "C[i][3]" {
+  shape: parallelogram
+  style.fill: "#BBDEFB"
+}
+
+# Activation flow (horizontal)
+act0 -> pe00 -> pe01 -> pe02 -> pe03 {
+  style.stroke: "#2E7D32"
+}
+act1 -> pe10 -> pe11 -> pe12 -> pe13 {
+  style.stroke: "#2E7D32"
+}
+act2 -> pe20 -> pe21 -> pe22 -> pe23 {
+  style.stroke: "#2E7D32"
+}
+act3 -> pe30 -> pe31 -> pe32 -> pe33 {
+  style.stroke: "#2E7D32"
+}
+
+# Psum flow (vertical)
+pe00 -> pe10 -> pe20 -> pe30 -> res0 {
+  style.stroke: "#1565C0"
+}
+pe01 -> pe11 -> pe21 -> pe31 -> res1 {
+  style.stroke: "#1565C0"
+}
+pe02 -> pe12 -> pe22 -> pe32 -> res2 {
+  style.stroke: "#1565C0"
+}
+pe03 -> pe13 -> pe23 -> pe33 -> res3 {
+  style.stroke: "#1565C0"
+}

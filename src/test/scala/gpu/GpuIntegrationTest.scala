@@ -6,14 +6,14 @@ import org.scalatest.funspec.AnyFunSpec
 
 class GpuIntegrationTest extends AnyFunSpec with ChiselSim {
 
-  val W = GpuParams.WarpWidth
+  val W  = GpuParams.WarpWidth
   val DW = GpuParams.DataWidth
 
-  def enc(op: Int, rd: Int = 0, rs1: Int = 0, rs2: Int = 0, rs3: Int = 0, imm: Int = 0): Int =
-    ((op & 0xF) << 28) | ((rd & 0xF) << 24) | ((rs1 & 0xF) << 20) |
-    ((rs2 & 0xF) << 16) | ((rs3 & 0xF) << 12) | (imm & 0xFFF)
+  def enc(op: Int, rd: Int = 0, rs1: Int = 0, rs2: Int = 0, rs3: Int = 0, imm: Int = 0): Long =
+    ((op & 0xF).toLong << 28) | ((rd & 0xF).toLong << 24) | ((rs1 & 0xF).toLong << 20) |
+    ((rs2 & 0xF).toLong << 16) | ((rs3 & 0xF).toLong << 12) | (imm & 0xFFF).toLong
 
-  def loadProgram(dut: ToyGpuTop, instrs: Seq[Int]): Unit = {
+  def loadProgram(dut: ToyGpuTop, instrs: Seq[Long]): Unit = {
     for ((instr, i) <- instrs.zipWithIndex) {
       dut.io.imemLoadEn.poke(true.B)
       dut.io.imemLoadAddr.poke(i.U)
@@ -67,19 +67,7 @@ class GpuIntegrationTest extends AnyFunSpec with ChiselSim {
     cycles
   }
 
-  def printPerf(dut: ToyGpuTop, label: String): Unit = {
-    val total  = dut.io.perf.totalCycles.peek().litValue.toLong
-    val active = dut.io.perf.activeWarpCycles.peek().litValue.toLong
-    val reads  = dut.io.perf.gmemReads.peek().litValue.toLong
-    val writes = dut.io.perf.gmemWrites.peek().litValue.toLong
-    println(s"\n=== GPU Perf ($label) ===")
-    println(f"  Total cycles:       $total%d")
-    println(f"  Active warp-cycles: $active%d")
-    println(f"  Gmem reads/writes:  $reads%d / $writes%d")
-    println("========================\n")
-  }
-
-  // --- Vector ADD program ---
+  // Simple ADD program: R2 = R0 + R1, then store
   val addProgram = Seq(
     enc(0x2, rd = 0, rs1 = 15, imm = 0),  // LD R0, [R15+0]
     enc(0x2, rd = 1, rs1 = 15, imm = 1),  // LD R1, [R15+1]
@@ -88,42 +76,58 @@ class GpuIntegrationTest extends AnyFunSpec with ChiselSim {
     enc(0x1)                                // HALT
   )
 
-  describe("ToyGpuTop Integration") {
+  describe("ToyGpuTop Multi-SM") {
 
-    it("runs NOP + HALT (latency=1)") {
+    it("runs NOP + HALT on all SMs") {
       simulate(new ToyGpuTop(gmemLatency = 1)) { dut =>
         initDut(dut)
         loadProgram(dut, Seq(enc(0x0), enc(0x1)))
         runToHalt(dut)
-        printPerf(dut, "NOP+HALT, latency=1")
       }
     }
 
-    it("vector ADD with latency=1 (on-chip speed)") {
+    it("4 SMs run vector ADD in parallel (latency=1)") {
       simulate(new ToyGpuTop(gmemLatency = 1)) { dut =>
         initDut(dut)
+
+        // All 4 SMs × 4 warps all read gmem[0] and gmem[1], write to gmem[2]
+        // (same data, just verifying multi-SM works)
         writeGmem(dut, 0, Array(10, 20, 30, 40))
         writeGmem(dut, 1, Array(1, 2, 3, 4))
         loadProgram(dut, addProgram)
-        runToHalt(dut)
 
+        val cycles = runToHalt(dut)
         val result = readGmem(dut, 2)
-        printPerf(dut, "VADD, latency=1")
-        assert(result.toSeq == Seq(11, 22, 33, 44), s"Got ${result.mkString(", ")}")
+
+        println(s"4-SM VADD (latency=1): $cycles cycles, result=${result.mkString(",")}")
+        assert(result.toSeq == Seq(11, 22, 33, 44))
+
+        // Print per-SM perf
+        for (s <- 0 until GpuParams.NumSMs) {
+          val total = dut.io.perf(s).totalCycles.peek().litValue.toLong
+          val active = dut.io.perf(s).activeWarpCycles.peek().litValue.toLong
+          println(s"  SM $s: total=$total, active=$active")
+        }
       }
     }
 
-    it("vector ADD with latency=10 (off-chip DRAM)") {
+    it("4 SMs with latency=10 (off-chip DRAM)") {
       simulate(new ToyGpuTop(gmemLatency = 10)) { dut =>
         initDut(dut)
         writeGmem(dut, 0, Array(10, 20, 30, 40))
         writeGmem(dut, 1, Array(1, 2, 3, 4))
         loadProgram(dut, addProgram)
-        runToHalt(dut)
 
+        val cycles = runToHalt(dut)
         val result = readGmem(dut, 2)
-        printPerf(dut, "VADD, latency=10")
-        assert(result.toSeq == Seq(11, 22, 33, 44), s"Got ${result.mkString(", ")}")
+
+        println(s"4-SM VADD (latency=10): $cycles cycles")
+        assert(result.toSeq == Seq(11, 22, 33, 44))
+
+        for (s <- 0 until GpuParams.NumSMs) {
+          val total = dut.io.perf(s).totalCycles.peek().litValue.toLong
+          println(s"  SM $s: total=$total")
+        }
       }
     }
   }

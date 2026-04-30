@@ -1,0 +1,43 @@
+direction: down
+
+title: |md
+  # 存储层次对比
+| {near: top-center}
+
+npu: 昇腾 NPU {
+  style.fill: "#E3F2FD"
+
+  hbm: HBM\n片外 4096×128b\n延迟=10 {shape: cylinder; style.fill: "#FFCDD2"}
+  l2: L2 Buffer\n片上共享 2048×128b\n延迟=1 {shape: cylinder; style.fill: "#FFF9C4"}
+  ub: UB (per-core)\n片上私有 256×128b\n延迟=1 {shape: cylinder; style.fill: "#C8E6C9"}
+  l0: weightBuf / actBuf\n寄存器级\n延迟=0 {shape: cylinder; style.fill: "#FFE0B2"}
+
+  hbm -> l2: 外部预加载
+  l2 -> ub: DMA_LOAD\nDMA_STORE {style.stroke: "#E65100"}
+  ub -> l0: LOAD\nSTORE {style.stroke: "#2E7D32"}
+}
+
+gpu: 英伟达 GPU {
+  style.fill: "#F3E5F5"
+
+  gmem: GlobalMem\n片外 4096×128b\n延迟=10 (Warp内) {shape: cylinder; style.fill: "#FFCDD2"}
+  shmem: SharedMem (per-SM)\n片上 256×128b\n延迟=1 {shape: cylinder; style.fill: "#FFF9C4"}
+  reg: RegFile (per-Warp)\n16×32b\n延迟=0 {shape: cylinder; style.fill: "#C8E6C9"}
+
+  gmem -> reg: LD / ST\n(含延迟等待) {style.stroke: "#C62828"}
+  shmem -> reg: SHM {style.stroke: "#4A148C"}
+}
+
+real_npu: 真实昇腾 {
+  style.fill: "#ECEFF1"
+  style.stroke-dash: 3
+
+  r_hbm: HBM {shape: cylinder; style.fill: "#EF9A9A"}
+  r_l2: L2 (共享) {shape: cylinder; style.fill: "#FFF59D"}
+  r_l1: L1 (私有) {shape: cylinder; style.fill: "#A5D6A7"}
+  r_l0: L0A/L0B/L0C {shape: cylinder; style.fill: "#FFCC80"}
+
+  r_hbm -> r_l2: MTE
+  r_l2 -> r_l1: MTE
+  r_l1 -> r_l0: MTE
+}

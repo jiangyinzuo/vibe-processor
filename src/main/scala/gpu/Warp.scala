@@ -18,6 +18,7 @@ class Warp(
     memLatency: Int = 1
 ) extends Module {
   val io = IO(new Bundle {
+    val start   = Input(Bool())   // one-shot start signal
     val enable  = Input(Bool())
     val halted  = Output(Bool())
     val busy    = Output(Bool())  // in sMemWait, don't schedule me
@@ -40,6 +41,8 @@ class Warp(
   val regFile = RegInit(VecInit.fill(warpWidth, numRegs)(0.S(dw.W)))
   val pc      = RegInit(0.U(8.W))
   val halted  = RegInit(false.B)
+  val started = RegInit(false.B)
+  when(io.start) { started := true.B }
 
   io.pc     := pc
   io.halted := halted
@@ -84,7 +87,7 @@ class Warp(
 
   switch(state) {
     is(sRun) {
-      when(io.enable && !halted) {
+      when(io.enable && !halted && started) {
         switch(op) {
           is(GpuOpcode.NOP)  { pc := pc + 1.U }
           is(GpuOpcode.HALT) { halted := true.B; state := sHalted }

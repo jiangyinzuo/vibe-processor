@@ -6,10 +6,11 @@ object GpuParams {
   val DataWidth   = Params.AccWidth  // GPU works on INT32 natively
   val WarpWidth   = 4                // 4 threads per warp (real GPU: 32)
   val NumWarps    = 4                // 4 warps per SM
+  val NumSMs      = 4                // 4 SMs (real GPU: 16-128)
   val NumRegs     = 16               // 16 registers per thread
   val InstrWidth  = 32
   val IMEMDepth   = 256
-  val GlobalDepth = 1024
+  val GlobalDepth = 4096
   val GlobalAddrW = 16
   val SharedDepth = 256
   val SharedAddrW = 8

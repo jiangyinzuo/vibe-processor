@@ -49,6 +49,7 @@ class SM(
   io.gmemWdata := VecInit.fill(warpWidth)(0.S(dw.W))
 
   for (i <- 0 until numWarps) {
+    warps(i).io.start    := io.start
     warps(i).io.enable   := scheduler.io.grant(i)
     warps(i).io.instr    := io.imemData(i)
     warps(i).io.shmRdata := shmRdata

@@ -3,12 +3,13 @@ package gpu
 import chisel3._
 import chisel3.util._
 
-/** Toy GPU Top Level.
+/** Toy GPU Top Level — Multi-SM architecture.
   *
-  * @param gmemLatency Global memory read latency in cycles (simulated inside each Warp).
-  *                    1 = on-chip SRAM speed, 10+ = off-chip DRAM simulation.
+  * @param numSMs      Number of Streaming Multiprocessors (default 4).
+  * @param gmemLatency Global memory read latency per warp (default 10).
   */
 class ToyGpuTop(
+    numSMs:      Int = GpuParams.NumSMs,
     numWarps:    Int = GpuParams.NumWarps,
     warpWidth:   Int = GpuParams.WarpWidth,
     dw:          Int = GpuParams.DataWidth,
@@ -27,59 +28,68 @@ class ToyGpuTop(
       val wdata = Input(Vec(warpWidth, SInt(dw.W)))
       val rdata = Output(Vec(warpWidth, SInt(dw.W)))
     }
-    val perf = Output(new GpuPerfCounters)
+    // Per-SM performance counters
+    val perf = Output(Vec(numSMs, new GpuPerfCounters))
   })
 
-  // Instruction memory (on-chip, combinational read)
+  // Shared instruction memory
   val imem = Mem(GpuParams.IMEMDepth, UInt(GpuParams.InstrWidth.W))
   when(io.imemLoadEn) { imem.write(io.imemLoadAddr, io.imemLoadData) }
 
-  // Global memory (single shared Mem, combinational read)
-  // Latency is modeled inside each Warp's FSM (stall counter)
+  // Shared global memory (combinational read, latency modeled in Warps)
   val gmem = Mem(GpuParams.GlobalDepth, Vec(warpWidth, SInt(dw.W)))
 
-  val sm = Module(new SM(numWarps, warpWidth, dw, memLatency = gmemLatency))
-
-  // SM <-> instruction memory
-  for (i <- 0 until numWarps) {
-    sm.io.imemData(i) := imem.read(sm.io.imemAddr(i))
-  }
-
-  // SM <-> global memory (combinational read)
-  sm.io.gmemRdata := gmem.read(sm.io.gmemAddr)
-  when(sm.io.gmemEn && sm.io.gmemWe) {
-    gmem.write(sm.io.gmemAddr, sm.io.gmemWdata)
-  }
-
-  // External port (test preload/readback, same backing Mem)
+  // External port
   io.gmemExt.rdata := gmem.read(io.gmemExt.addr)
   when(io.gmemExt.en && io.gmemExt.we) {
     gmem.write(io.gmemExt.addr, io.gmemExt.wdata)
   }
 
-  sm.io.start  := io.start
-  io.allHalted := sm.io.allHalted
+  // === Streaming Multiprocessors ===
+  val sms = Array.fill(numSMs)(Module(new SM(numWarps, warpWidth, dw, memLatency = gmemLatency)))
 
-  // --- Performance Counters ---
-  val perf = RegInit(0.U.asTypeOf(new GpuPerfCounters))
-  io.perf := perf
+  val smHalted = VecInit(sms.map(_.io.allHalted))
+  io.allHalted := smHalted.asUInt.andR
 
-  val running = RegInit(false.B)
-  when(io.start)     { running := true.B }
-  when(io.allHalted) { running := false.B }
+  for (i <- 0 until numSMs) {
+    val sm = sms(i)
+    sm.io.start := io.start
 
-  when(running && !io.allHalted) {
-    perf.totalCycles := perf.totalCycles + 1.U
-  }
-  when(running) {
-    for (i <- 0 until numWarps) {
-      when(sm.io.dbgGrant(i)) {
-        perf.activeWarpCycles := perf.activeWarpCycles + 1.U
-      }
+    // Shared instruction memory (all SMs read same program)
+    for (w <- 0 until numWarps) {
+      sm.io.imemData(w) := imem.read(sm.io.imemAddr(w))
+    }
+
+    // Global memory: each SM gets combinational read access
+    // Mem supports multiple combinational reads per cycle
+    sm.io.gmemRdata := gmem.read(sm.io.gmemAddr)
+    when(sm.io.gmemEn && sm.io.gmemWe) {
+      gmem.write(sm.io.gmemAddr, sm.io.gmemWdata)
     }
   }
-  when(sm.io.gmemEn && !sm.io.gmemWe) { perf.gmemReads  := perf.gmemReads  + 1.U }
-  when(sm.io.gmemEn && sm.io.gmemWe)  { perf.gmemWrites := perf.gmemWrites + 1.U }
+
+  // === Per-SM Performance Counters ===
+  for (i <- 0 until numSMs) {
+    val perf = RegInit(0.U.asTypeOf(new GpuPerfCounters))
+    io.perf(i) := perf
+
+    val running = RegInit(false.B)
+    when(io.start)              { running := true.B }
+    when(sms(i).io.allHalted)   { running := false.B }
+
+    when(running && !sms(i).io.allHalted) {
+      perf.totalCycles := perf.totalCycles + 1.U
+    }
+    when(running) {
+      for (w <- 0 until numWarps) {
+        when(sms(i).io.dbgGrant(w)) {
+          perf.activeWarpCycles := perf.activeWarpCycles + 1.U
+        }
+      }
+    }
+    when(sms(i).io.gmemEn && !sms(i).io.gmemWe) { perf.gmemReads  := perf.gmemReads  + 1.U }
+    when(sms(i).io.gmemEn && sms(i).io.gmemWe)  { perf.gmemWrites := perf.gmemWrites + 1.U }
+  }
 }
 
 class GpuPerfCounters extends Bundle {

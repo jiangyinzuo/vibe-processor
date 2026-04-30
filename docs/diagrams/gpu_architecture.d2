@@ -1,0 +1,85 @@
+direction: down
+
+title: |md
+  # 英伟达 GPU — 多SM架构 (4×SM)
+| {near: top-center}
+
+imem: InstrMem\n(共享 256×32b) {
+  shape: page
+  style.fill: "#E3F2FD"
+}
+
+gmem: GlobalMem\n(片外语义 Mem\n4096×128b\n延迟在Warp内建模) {
+  shape: cylinder
+  style.fill: "#FFCDD2"
+}
+
+sm0: SM 0 {
+  style.fill: "#E8F5E9"
+
+  sched: WarpScheduler\n(Round-Robin) {
+    shape: hexagon
+    style.fill: "#C8E6C9"
+  }
+
+  w0: Warp 0\n4×CudaCore\n+ RegFile {
+    style.fill: "#FFE0B2"
+  }
+  w1: Warp 1 {style.fill: "#FFE0B2"}
+  w2: Warp 2 {style.fill: "#FFE0B2"}
+  w3: Warp 3 {style.fill: "#FFE0B2"}
+
+  shmem: SharedMem\n(256×128b) {
+    shape: cylinder
+    style.fill: "#FFF9C4"
+  }
+
+  sched -> w0: grant
+  sched -> w1: grant
+  sched -> w2: grant
+  sched -> w3: grant
+}
+
+sm1: SM 1 {
+  style.fill: "#E8F5E9"
+  sched: Scheduler {shape: hexagon; style.fill: "#C8E6C9"}
+  w0: Warp 0..3 {style.fill: "#FFE0B2"}
+  shmem: SharedMem {shape: cylinder; style.fill: "#FFF9C4"}
+  sched -> w0
+}
+
+sm2: SM 2 {
+  style.fill: "#E8F5E9"
+  sched: Scheduler {shape: hexagon; style.fill: "#C8E6C9"}
+  w0: Warp 0..3 {style.fill: "#FFE0B2"}
+  shmem: SharedMem {shape: cylinder; style.fill: "#FFF9C4"}
+  sched -> w0
+}
+
+sm3: SM 3 {
+  style.fill: "#E8F5E9"
+  sched: Scheduler {shape: hexagon; style.fill: "#C8E6C9"}
+  w0: Warp 0..3 {style.fill: "#FFE0B2"}
+  shmem: SharedMem {shape: cylinder; style.fill: "#FFF9C4"}
+  sched -> w0
+}
+
+imem -> sm0.sched
+imem -> sm1.sched
+imem -> sm2.sched
+imem -> sm3.sched
+
+gmem -> sm0.w0: LD/ST {style.stroke: "#C62828"}
+gmem -> sm1.w0: LD/ST {style.stroke: "#C62828"}
+gmem -> sm2.w0: LD/ST {style.stroke: "#C62828"}
+gmem -> sm3.w0: LD/ST {style.stroke: "#C62828"}
+
+perf: PerfCounters\n(per-SM × 4) {
+  shape: document
+  style.fill: "#F3E5F5"
+}
+
+sm0 -> perf
+sm1 -> perf
+sm2 -> perf
+sm3 -> perf
