@@ -1,0 +1,130 @@
+package gpu
+
+import chisel3._
+import chisel3.simulator.scalatest.ChiselSim
+import org.scalatest.funspec.AnyFunSpec
+
+class GpuIntegrationTest extends AnyFunSpec with ChiselSim {
+
+  val W = GpuParams.WarpWidth
+  val DW = GpuParams.DataWidth
+
+  def enc(op: Int, rd: Int = 0, rs1: Int = 0, rs2: Int = 0, rs3: Int = 0, imm: Int = 0): Int =
+    ((op & 0xF) << 28) | ((rd & 0xF) << 24) | ((rs1 & 0xF) << 20) |
+    ((rs2 & 0xF) << 16) | ((rs3 & 0xF) << 12) | (imm & 0xFFF)
+
+  def loadProgram(dut: ToyGpuTop, instrs: Seq[Int]): Unit = {
+    for ((instr, i) <- instrs.zipWithIndex) {
+      dut.io.imemLoadEn.poke(true.B)
+      dut.io.imemLoadAddr.poke(i.U)
+      dut.io.imemLoadData.poke(instr.U)
+      dut.clock.step()
+    }
+    dut.io.imemLoadEn.poke(false.B)
+    dut.clock.step()
+  }
+
+  def writeGmem(dut: ToyGpuTop, addr: Int, values: Array[Int]): Unit = {
+    dut.io.gmemExt.en.poke(true.B)
+    dut.io.gmemExt.we.poke(true.B)
+    dut.io.gmemExt.addr.poke(addr.U)
+    for (i <- 0 until W) dut.io.gmemExt.wdata(i).poke(values(i).S(DW.W))
+    dut.clock.step()
+    dut.io.gmemExt.en.poke(false.B)
+    dut.io.gmemExt.we.poke(false.B)
+    dut.clock.step()
+  }
+
+  def readGmem(dut: ToyGpuTop, addr: Int): Array[Int] = {
+    dut.io.gmemExt.en.poke(true.B)
+    dut.io.gmemExt.we.poke(false.B)
+    dut.io.gmemExt.addr.poke(addr.U)
+    dut.clock.step()
+    dut.io.gmemExt.en.poke(false.B)
+    val result = Array.tabulate(W)(i => dut.io.gmemExt.rdata(i).peek().litValue.toInt)
+    dut.clock.step()
+    result
+  }
+
+  def initDut(dut: ToyGpuTop): Unit = {
+    dut.io.start.poke(false.B)
+    dut.io.imemLoadEn.poke(false.B)
+    dut.io.gmemExt.en.poke(false.B)
+    dut.io.gmemExt.we.poke(false.B)
+  }
+
+  def runToHalt(dut: ToyGpuTop, maxCycles: Int = 1000): Int = {
+    dut.io.start.poke(true.B)
+    dut.clock.step()
+    dut.io.start.poke(false.B)
+    var cycles = 0
+    while (!dut.io.allHalted.peek().litToBoolean && cycles < maxCycles) {
+      dut.clock.step()
+      cycles += 1
+    }
+    assert(dut.io.allHalted.peek().litToBoolean, s"Did not halt within $maxCycles cycles")
+    dut.clock.step()
+    cycles
+  }
+
+  def printPerf(dut: ToyGpuTop, label: String): Unit = {
+    val total  = dut.io.perf.totalCycles.peek().litValue.toLong
+    val active = dut.io.perf.activeWarpCycles.peek().litValue.toLong
+    val reads  = dut.io.perf.gmemReads.peek().litValue.toLong
+    val writes = dut.io.perf.gmemWrites.peek().litValue.toLong
+    println(s"\n=== GPU Perf ($label) ===")
+    println(f"  Total cycles:       $total%d")
+    println(f"  Active warp-cycles: $active%d")
+    println(f"  Gmem reads/writes:  $reads%d / $writes%d")
+    println("========================\n")
+  }
+
+  // --- Vector ADD program ---
+  val addProgram = Seq(
+    enc(0x2, rd = 0, rs1 = 15, imm = 0),  // LD R0, [R15+0]
+    enc(0x2, rd = 1, rs1 = 15, imm = 1),  // LD R1, [R15+1]
+    enc(0x4, rd = 2, rs1 = 0, rs2 = 1),   // ADD R2, R0, R1
+    enc(0x3, rs1 = 15, rs2 = 2, imm = 2), // ST [R15+2], R2
+    enc(0x1)                                // HALT
+  )
+
+  describe("ToyGpuTop Integration") {
+
+    it("runs NOP + HALT (latency=1)") {
+      simulate(new ToyGpuTop(gmemLatency = 1)) { dut =>
+        initDut(dut)
+        loadProgram(dut, Seq(enc(0x0), enc(0x1)))
+        runToHalt(dut)
+        printPerf(dut, "NOP+HALT, latency=1")
+      }
+    }
+
+    it("vector ADD with latency=1 (on-chip speed)") {
+      simulate(new ToyGpuTop(gmemLatency = 1)) { dut =>
+        initDut(dut)
+        writeGmem(dut, 0, Array(10, 20, 30, 40))
+        writeGmem(dut, 1, Array(1, 2, 3, 4))
+        loadProgram(dut, addProgram)
+        runToHalt(dut)
+
+        val result = readGmem(dut, 2)
+        printPerf(dut, "VADD, latency=1")
+        assert(result.toSeq == Seq(11, 22, 33, 44), s"Got ${result.mkString(", ")}")
+      }
+    }
+
+    it("vector ADD with latency=10 (off-chip DRAM)") {
+      simulate(new ToyGpuTop(gmemLatency = 10)) { dut =>
+        initDut(dut)
+        writeGmem(dut, 0, Array(10, 20, 30, 40))
+        writeGmem(dut, 1, Array(1, 2, 3, 4))
+        loadProgram(dut, addProgram)
+        runToHalt(dut)
+
+        val result = readGmem(dut, 2)
+        printPerf(dut, "VADD, latency=10")
+        assert(result.toSeq == Seq(11, 22, 33, 44), s"Got ${result.mkString(", ")}")
+      }
+    }
+  }
+}

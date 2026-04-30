@@ -16,6 +16,8 @@ class CubeUnit(
     val actData     = Input(Vec(n, Vec(n, SInt(dw.W))))
     val result      = Output(Vec(n, Vec(n, SInt(aw.W))))
     val resultValid = Output(Bool())
+    // Debug
+    val dbgFeeding  = Output(Bool())
   })
 
   val sa = Module(new SystolicArray(n, dw, aw))
@@ -57,6 +59,7 @@ class CubeUnit(
   }
 
   io.done        := state === sDone
+  io.dbgFeeding  := state === sFeed
   io.result      := sa.io.result
   io.resultValid := sa.io.resultValid
 }

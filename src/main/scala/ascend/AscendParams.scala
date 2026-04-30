@@ -11,4 +11,8 @@ object AscendParams {
   val UBDepth    = 1024
   val UBAddrW    = 16
   val IMEMDepth  = 256
+  // HBM (off-chip)
+  val HBMDepth   = 4096
+  val HBMAddrW   = 16
+  val HBMLatency = 10  // cycles per read request
 }

@@ -1,62 +1,103 @@
-# Toy Ascend NPU - Instruction Set Architecture
+# 指令集参考
 
-## Overview
+本项目包含两个玩具加速器：昇腾 NPU 和英伟达 GPU。
 
-7 instructions, 32-bit fixed-width encoding, 4-bit opcode.
+## 昇腾 NPU 指令集 (9 条)
 
-Implemented in Chisel 7 (Scala). Verilog can be generated via `sbt "runMain ascend.Elaborate"`.
+32 位固定宽度编码，4 位操作码。
 
-## Instruction Encoding
+### 编码格式
 
-### N-type (NOP, HALT)
 ```
-[31:28] opcode  [27:0] reserved (0)
+N-type (NOP, HALT):
+  [31:28] 操作码  [27:0] 保留
+
+M-type (LOAD, STORE):
+  [31:28] 操作码  [27:26] 缓存选择  [25:20] 保留  [19:4] UB地址  [3:0] 保留
+  缓存选择: 00=L0_A(权重)  01=L0_B(激活)  10=L0_C(结果)  11=VEC
+
+C-type (MATMUL):
+  [31:28] 操作码  [27:0] 保留
+
+V-type (VECADD, RELU):
+  [31:28] 操作码  [27:22] 源1  [21:16] 源2  [15:10] 目标  [9:0] 保留
+
+D-type (DMA_LOAD, DMA_STORE):
+  [31:28] 操作码  [27:20] UB基地址  [19:4] HBM基地址  [3:0] 保留
 ```
 
-### M-type (LOAD, STORE)
+### 指令表
+
+| 操作码 | 助记符      | 功能                                 |
+|--------|------------|--------------------------------------|
+| 0x0    | NOP        | 空操作                               |
+| 0x1    | HALT       | 停机                                 |
+| 0x2    | LOAD       | UB → 内部缓存 (N 行)                 |
+| 0x3    | STORE      | 内部缓存 → UB (N 行)                 |
+| 0x4    | MATMUL     | C = A × W (4×4, INT8 → INT32)       |
+| 0x5    | VECADD     | 向量加法 (4 路, 32 位)               |
+| 0x6    | RELU       | 激活函数 max(0, x)                   |
+| 0x8    | DMA_LOAD   | HBM → UB (N 行, 片外 → 片上)         |
+| 0x9    | DMA_STORE  | UB → HBM (N 行, 片上 → 片外)         |
+
+### 示例程序
+
 ```
-[31:28] opcode  [27:26] buf_sel  [25:20] reg_addr  [19:4] mem_addr  [3:0] size
+DMA_LOAD  ub=0, hbm=0      ; HBM[0..3] → UB[0..3] (激活矩阵)
+DMA_LOAD  ub=4, hbm=4      ; HBM[4..7] → UB[4..7] (权重矩阵)
+LOAD      L0_B, 0           ; UB[0..3] → 激活缓存
+LOAD      L0_A, 4           ; UB[4..7] → 权重缓存
+MATMUL                       ; C = A × W
+STORE     L0_C, 8           ; 结果 → UB[8..11]
+DMA_STORE ub=8, hbm=100     ; UB[8..11] → HBM[100..103]
+HALT
 ```
-- `buf_sel`: 00=L0_A(weight), 01=L0_B(activation), 10=L0_C(result), 11=VEC
-- `mem_addr`: UB base address (row 0), loads/stores N consecutive rows
 
-### C-type (MATMUL)
+---
+
+## 英伟达 GPU 指令集 (8 条)
+
+32 位编码: `[31:28]操作码 [27:24]目标寄存器 [23:20]源1 [19:16]源2 [15:12]源3 [11:0]立即数`
+
+所有 Warp 中的线程以 SIMT 方式并行执行同一条指令。
+
+### 指令表
+
+| 操作码 | 助记符 | 功能                              |
+|--------|--------|-----------------------------------|
+| 0x0    | NOP    | 空操作                            |
+| 0x1    | HALT   | 停机 (当前 Warp)                   |
+| 0x2    | LD     | Rd = GlobalMem[Rs1 + imm]         |
+| 0x3    | ST     | GlobalMem[Rs1 + imm] = Rs2        |
+| 0x4    | ADD    | Rd = Rs1 + Rs2                    |
+| 0x5    | MUL    | Rd = Rs1 × Rs2                    |
+| 0x6    | MAD    | Rd = Rs1 × Rs2 + Rs3 (乘累加)     |
+| 0x7    | SHM    | SharedMem 操作 (imm[11]: 0=读, 1=写) |
+
+### 示例程序
+
 ```
-[31:28] opcode  [27:0] reserved (0)
+LD   R0, [R15 + 0]    ; 从 GlobalMem[0] 加载向量到 R0
+LD   R1, [R15 + 1]    ; 从 GlobalMem[1] 加载向量到 R1
+ADD  R2, R0, R1        ; R2 = R0 + R1 (4 条 lane 并行)
+ST   [R15 + 2], R2     ; 存储结果到 GlobalMem[2]
+HALT
 ```
-Computes C = A * W using pre-loaded L0_A (weight) and L0_B (activation) buffers.
-Result stored internally, accessible via STORE L0_C.
 
-### V-type (VECADD, RELU)
-```
-[31:28] opcode  [27:22] src1  [21:16] src2  [15:10] dst  [9:0] reserved
-```
-- `src1/src2/dst`: row index into internal result buffer
+---
 
-## Instructions
-
-| Opcode | Hex | Mnemonic | Description |
-|--------|-----|----------|-------------|
-| 0000 | 0x0 | NOP | No operation |
-| 0001 | 0x1 | HALT | Stop execution |
-| 0010 | 0x2 | LOAD | Transfer N rows from UB to internal buffer |
-| 0011 | 0x3 | STORE | Transfer N rows from internal buffer to UB |
-| 0100 | 0x4 | MATMUL | 4x4 matrix multiply C = A * W (INT8 -> INT32) |
-| 0101 | 0x5 | VECADD | Vector addition (4-wide, 32-bit) |
-| 0110 | 0x6 | RELU | ReLU activation: max(0, x) |
-
-## Architecture
-
-- 4x4 weight-stationary systolic array (INT8 multiply, INT32 accumulate)
-- Scalar Unit: sequential instruction execution FSM
-- Vector Unit: single-cycle VECADD/RELU
-- Unified Buffer: 1024 x 128-bit dual-port SyncReadMem
-- Instruction Memory: 256 x 32-bit combinational-read Mem
-
-## Build & Test
+## 构建与测试
 
 ```bash
-sbt test                          # Run all 13 tests
-sbt "testOnly ascend.PETest"      # Run PE unit tests only
-sbt "runMain ascend.Elaborate"    # Generate SystemVerilog to generated/
+sbt test                          # 全部 28 个测试
+sbt "testOnly ascend.*"           # NPU 测试
+sbt "testOnly gpu.*"              # GPU 测试
+sbt "runMain top.Elaborate"       # 生成 SystemVerilog
+```
+
+## 可视化
+
+```bash
+sbt "runMain top.Visualize"       # Graphviz 架构图 → docs/diagrams/
+bash tools/gen_schematic.sh       # RTL 原理图 → docs/schematics/
 ```

@@ -5,13 +5,15 @@ import chisel3.util._
 
 /** Instruction opcodes. */
 object Opcode {
-  val NOP    = 0x0.U(4.W)
-  val HALT   = 0x1.U(4.W)
-  val LOAD   = 0x2.U(4.W)
-  val STORE  = 0x3.U(4.W)
-  val MATMUL = 0x4.U(4.W)
-  val VECADD = 0x5.U(4.W)
-  val RELU   = 0x6.U(4.W)
+  val NOP       = 0x0.U(4.W)
+  val HALT      = 0x1.U(4.W)
+  val LOAD      = 0x2.U(4.W)
+  val STORE     = 0x3.U(4.W)
+  val MATMUL    = 0x4.U(4.W)
+  val VECADD    = 0x5.U(4.W)
+  val RELU      = 0x6.U(4.W)
+  val DMA_LOAD  = 0x8.U(4.W)  // HBM → UB
+  val DMA_STORE = 0x9.U(4.W)  // UB → HBM
 }
 
 /** Buffer select for LOAD/STORE. */
@@ -53,21 +55,31 @@ class ScalarUnit(
     val vecSrc1  = Output(Vec(n, SInt(aw.W)))
     val vecSrc2  = Output(Vec(n, SInt(aw.W)))
     val vecDst   = Input(Vec(n, SInt(aw.W)))
+    // DMA Engine
+    val dmaStart   = Output(Bool())
+    val dmaDone    = Input(Bool())
+    val dmaIsStore = Output(Bool())
+    val dmaHbmAddr = Output(UInt(AscendParams.HBMAddrW.W))
+    val dmaUbAddr  = Output(UInt(AscendParams.UBAddrW.W))
+    // Debug / perf counter outputs (pure observation)
+    val dbgState = Output(UInt(4.W))
+    val dbgOpLat = Output(UInt(4.W))
   })
 
   // FSM states
   // scalafmt: { maxColumn = 120 }
-  val sIdle :: sFetch :: sDecode :: sLoad0 :: sLoad1 :: sLoad2 :: sStore0 :: sStore1 :: sMatmul :: sVec :: sHalted :: Nil = Enum(11)
+  val sIdle :: sFetch :: sDecode :: sLoad0 :: sLoad1 :: sLoad2 :: sStore0 :: sStore1 :: sMatmul :: sVec :: sDmaWait :: sHalted :: Nil = Enum(12)
 
   val state = RegInit(sIdle)
   val pc    = RegInit(0.U(8.W))
 
   // Latched instruction fields
-  val opLat     = RegInit(0.U(4.W))
-  val dstSelLat = RegInit(0.U(2.W))
+  val opLat      = RegInit(0.U(4.W))
+  val dstSelLat  = RegInit(0.U(2.W))
   val memAddrLat = RegInit(0.U(16.W))
   val vecSrc1Lat = RegInit(0.U(6.W))
   val vecSrc2Lat = RegInit(0.U(6.W))
+  val dmaUbLat   = RegInit(0.U(8.W))  // [27:20] for DMA ub_base
   val rowCnt    = RegInit(0.U(4.W))
 
   val rowIdx = rowCnt(1, 0) // truncate to 2 bits for Vec(4)
@@ -84,6 +96,10 @@ class ScalarUnit(
 
   io.imemAddr := pc
   io.halted   := state === sHalted
+
+  // Debug outputs
+  io.dbgState := state.asUInt
+  io.dbgOpLat := opLat
 
   // Default outputs
   val ubEn    = WireDefault(false.B)
@@ -105,6 +121,15 @@ class ScalarUnit(
   io.vecSrc1  := VecInit.fill(n)(0.S(aw.W))
   io.vecSrc2  := VecInit.fill(n)(0.S(aw.W))
 
+  io.dmaStart   := false.B
+  io.dmaIsStore := false.B
+  io.dmaHbmAddr := 0.U
+  io.dmaUbAddr  := 0.U
+
+  // DMA decode fields: [27:20] ub_base, [19:4] hbm_base
+  val dmaUbBase  = instr(27, 20)
+  val dmaHbmBase = instr(19, 4)
+
   switch(state) {
     is(sIdle) {
       when(io.start) {
@@ -124,6 +149,7 @@ class ScalarUnit(
       memAddrLat := memAddr
       vecSrc1Lat := vecSrc1Addr
       vecSrc2Lat := vecSrc2Addr
+      dmaUbLat   := instr(27, 20)  // [27:20] for DMA ub_base
 
       switch(op) {
         is(Opcode.NOP) {
@@ -146,6 +172,12 @@ class ScalarUnit(
         }
         is(Opcode.VECADD, Opcode.RELU) {
           state := sVec
+        }
+        is(Opcode.DMA_LOAD) {
+          state := sDmaWait
+        }
+        is(Opcode.DMA_STORE) {
+          state := sDmaWait
         }
       }
     }
@@ -222,6 +254,19 @@ class ScalarUnit(
       io.vecStart := true.B
       when(io.vecDone) {
         io.vecStart := false.B
+        pc    := pc + 1.U
+        state := sFetch
+      }
+    }
+
+    // DMA_LOAD / DMA_STORE
+    is(sDmaWait) {
+      io.dmaStart   := true.B
+      io.dmaIsStore := opLat === Opcode.DMA_STORE
+      io.dmaHbmAddr := memAddrLat
+      io.dmaUbAddr  := dmaUbLat
+      when(io.dmaDone) {
+        io.dmaStart := false.B
         pc    := pc + 1.U
         state := sFetch
       }

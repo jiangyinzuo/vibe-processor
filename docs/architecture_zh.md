@@ -1,344 +1,379 @@
-# 玩具版昇腾 NPU 架构文档
+# 玩具版 AI 加速器架构文档
 
-## 项目简介
+本项目包含两个教学用 AI 加速器的 RTL 实现：
 
-本项目是一个出于教学目的的简化版昇腾 (Ascend) NPU 实现，使用 Chisel 7 (Scala) 编写硬件描述，
-通过 svsim + Verilator 进行仿真，ScalaTest 编写验证测试。可通过 CIRCT/firtool 生成 SystemVerilog。
+- **玩具版昇腾 NPU** — 收缩阵列 + DMA + 片上/片外存储层次
+- **玩具版英伟达 GPU** — SIMT 执行模型 + Warp 调度 + 可配置存储延迟
 
-项目展示了 AI 加速器的核心工作原理：
-- 收缩阵列 (Systolic Array) 如何高效完成矩阵乘法
-- Weight-Stationary 数据流的工作方式
-- NPU 内部的三级执行单元协作（Scalar / Cube / Vector）
-- 片上缓存层次与数据搬运机制
+使用 Chisel 7 (Scala) 编写，Verilator (via svsim) 仿真，ScalaTest 验证。
 
-## 整体架构
+---
+
+## 一、昇腾 NPU
+
+### 1.1 整体架构
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                       ToyAscendTop                              │
+│                         ToyAscendTop                            │
 │                                                                 │
-│  ┌──────────────────────┐    ┌──────────────────────────────┐   │
-│  │     InstrMem          │    │      UnifiedBuffer           │   │
-│  │   256 × 32-bit        │    │   1024 × 128-bit (SyncReadMem)│  │
-│  │   Mem (组合读)        │    │                              │   │
-│  │  loadEn ──►  [IMEM]   │    │  Port A ◄──► AI Core         │   │
-│  │  loadAddr   addr ◄──┤    │  Port B ◄──► 外部接口(测试)  │   │
-│  │  loadData   instr ──┤    │                              │   │
-│  └───────────────────────┘    └──────────────────────────────┘   │
-│              │                          ▲                        │
-│              ▼                          │                        │
-│  ┌──────────────────────────────────────┴─────────────────────┐  │
-│  │                        AiCore                              │  │
-│  │                                                            │  │
-│  │  ┌────────────────────────────────────────────────────┐    │  │
-│  │  │                  ScalarUnit                         │    │  │
-│  │  │  ┌───────┐  ┌────────┐  ┌──────────────────────┐   │    │  │
-│  │  │  │  PC   │─►│ DECODE │─►│    Execution FSM     │   │    │  │
-│  │  │  └───────┘  └────────┘  │                      │   │    │  │
-│  │  │                         │  FETCH → DECODE →     │   │    │  │
-│  │  │                         │  LOAD / MATMUL /      │   │    │  │
-│  │  │                         │  VECADD / HALT        │   │    │  │
-│  │  │                         └──────────────────────┘   │    │  │
-│  │  └──────┬──────────────┬──────────────────────────────┘    │  │
-│  │         │              │                                   │  │
-│  │    start/done     start/done                               │  │
-│  │         │              │                                   │  │
-│  │  ┌──────▼──────┐  ┌───▼────────────┐                      │  │
-│  │  │  CubeUnit   │  │  VectorUnit    │                      │  │
-│  │  │             │  │                │                      │  │
-│  │  │  weightBuf  │  │  VECADD: a+b   │                      │  │
-│  │  │  actBuf     │  │  RELU: max(0,x)│                      │  │
-│  │  │      │      │  │                │                      │  │
-│  │  │      ▼      │  │  单周期执行     │                      │  │
-│  │  │  Systolic   │  └────────────────┘                      │  │
-│  │  │  Array 4×4  │                                          │  │
-│  │  │             │                                          │  │
-│  │  │  resultReg  │                                          │  │
-│  │  └─────────────┘                                          │  │
-│  └────────────────────────────────────────────────────────────┘  │
-│                                                                 │
-│  start ──►                                        ──► halted    │
+│  ┌───────────────────┐                                          │
+│  │ HBM (片外)         │  LatencyMem, 4096×128b, 默认 10 周期延迟 │
+│  └────────┬──────────┘                                          │
+│           │ DMA_LOAD / DMA_STORE                                │
+│  ┌────────▼──────────┐                                          │
+│  │ DmaEngine          │  FSM, 逐行搬运 (N=4 行/次)              │
+│  └────────┬──────────┘                                          │
+│           │                                                     │
+│  ┌────────▼──────────┐    ┌──────────────────┐                  │
+│  │ UnifiedBuffer (UB) │    │ InstrMem          │                 │
+│  │ 片上 SyncReadMem   │    │ 256×32b 组合读    │                 │
+│  │ 1024×128b, 1 周期  │    └────────┬─────────┘                 │
+│  └────────┬──────────┘             │                            │
+│           │                        │                            │
+│  ┌────────▼────────────────────────▼──────────────────────────┐ │
+│  │                         AiCore                              │ │
+│  │                                                             │ │
+│  │  ScalarUnit ──── CubeUnit ──── VectorUnit                  │ │
+│  │  (FSM 12态)      │             (VECADD/RELU)                │ │
+│  │                   SystolicArray                              │ │
+│  │                   └── PE[4][4]                               │ │
+│  │                                                             │ │
+│  │  PerfCounters (17 个计数器, 纯观测)                          │ │
+│  └─────────────────────────────────────────────────────────────┘ │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-## 收缩阵列详解
+### 1.2 存储层次
 
-本设计采用 Weight-Stationary (权重固定) 数据流的 4×4 收缩阵列，
-计算 C = A × W，其中 A 和 W 均为 4×4 矩阵。
+| 存储       | 类型        | 深度  | 字宽   | 读延迟     | 语义   |
+|------------|-------------|-------|--------|------------|--------|
+| HBM        | LatencyMem  | 4096  | 128 bit| 可配置 (默认10) | 片外 DRAM |
+| UB         | SyncReadMem | 1024  | 128 bit| 1 周期     | 片上 SRAM |
+| weightBuf/actBuf | RegInit | 4×4   | 8 bit  | 0 (组合读) | 寄存器级缓存 |
+| cubeResult | RegInit     | 4×4   | 32 bit | 0 (组合读) | 计算结果暂存 |
+| InstrMem   | Mem         | 256   | 32 bit | 0 (组合读) | 片上 I-Cache |
 
-### PE (处理单元) 内部结构
-
-```
-            dataIn (激活值)
-               │
-               ▼
-         ┌───────────┐
-         │           │
-psumIn ──►  weight   ├──► psumOut = psumIn + weight × dataIn
-         │  (固定)   │
-         │           │
-         └─────┬─────┘
-               │
-               ▼
-            dataOut (传递给下一个 PE)
-```
-
-Chisel 实现（`PE.scala`）：
-```scala
-val weightReg = RegInit(0.S(dw.W))
-when(io.weightLoad) { weightReg := io.weightIn }
-io.dataOut := RegNext(io.dataIn, 0.S)
-io.psumOut := RegNext(io.psumIn + weightReg * io.dataIn, 0.S)
-```
-
-### 4×4 阵列拓扑
+数据流：
 
 ```
-  激活值从左侧注入 (水平流动 →)
-  部分和从顶部累加 (垂直流动 ↓)
+HBM ──DMA──► UB ──LOAD──► weightBuf/actBuf ──► Cube ──► cubeResult ──STORE──► UB ──DMA──► HBM
+```
 
+#### 与真实昇腾存储层次的映射
+
+真实昇腾有 5 级存储（HBM → L2 → L1 → L0A/L0B/L0C → UB），MTE（DMA 引擎）可在任意两级之间搬运。
+本项目做了简化合并，映射关系如下：
+
+```
+真实昇腾                         本项目                    说明
+────────────────────────────────────────────────────────────────────
+HBM / DDR (片外)            ──►  HBM (LatencyMem)         片外高延迟存储
+    │ MTE                            │ DmaEngine
+L2 Buffer (多核共享)        ┐
+                            ├──► UB (SyncReadMem)          合并为一级片上 SRAM
+L1 Buffer (单核私有)        ┘
+    │ MTE                            │ LOAD/STORE 指令
+L0A (Cube 激活输入)         ──►  actBuf (Reg)              Scalar 内部寄存器
+L0B (Cube 权重输入)         ──►  weightBuf (Reg)           Scalar 内部寄存器
+L0C (Cube 结果输出)         ──►  cubeResult (Reg)          Cube 输出寄存器
+UB  (Vector/Scalar 使用)    ──►  (合并到上面的 UB 中)
+```
+
+关键简化：
+- L2 和 L1 合并为单一 UB，省去了多级 DMA 调度的复杂度
+- `LOAD`/`STORE` 指令实质上模拟了 L1 → L0 的搬运过程
+- 真实昇腾的 MTE 支持任意两级之间的异步搬运，本项目的 DmaEngine 仅支持 HBM ↔ UB
+
+### 1.3 收缩阵列
+
+Weight-Stationary 4×4 收缩阵列，计算 C = A × W (INT8 → INT32)。
+
+```
   psum=0    psum=0    psum=0    psum=0
     ↓         ↓         ↓         ↓
   ┌─────┐  ┌─────┐  ┌─────┐  ┌─────┐
- →│W₀₀  │→│W₀₁  │→│W₀₂  │→│W₀₃  │→  actIn(0): A[i][0]
+ →│W₀₀  │→│W₀₁  │→│W₀₂  │→│W₀₃  │→  actIn(0)
   └──┬──┘  └──┬──┘  └──┬──┘  └──┬──┘
      ↓        ↓        ↓        ↓
   ┌─────┐  ┌─────┐  ┌─────┐  ┌─────┐
- →│W₁₀  │→│W₁₁  │→│W₁₂  │→│W₁₃  │→  actIn(1): A[i][1]
+ →│W₁₀  │→│W₁₁  │→│W₁₂  │→│W₁₃  │→  actIn(1)
   └──┬──┘  └──┬──┘  └──┬──┘  └──┬──┘
      ↓        ↓        ↓        ↓
   ┌─────┐  ┌─────┐  ┌─────┐  ┌─────┐
- →│W₂₀  │→│W₂₁  │→│W₂₂  │→│W₂₃  │→  actIn(2): A[i][2]
+ →│W₂₀  │→│W₂₁  │→│W₂₂  │→│W₂₃  │→  actIn(2)
   └──┬──┘  └──┬──┘  └──┬──┘  └──┬──┘
      ↓        ↓        ↓        ↓
   ┌─────┐  ┌─────┐  ┌─────┐  ┌─────┐
- →│W₃₀  │→│W₃₁  │→│W₃₂  │→│W₃₃  │→  actIn(3): A[i][3]
+ →│W₃₀  │→│W₃₁  │→│W₃₂  │→│W₃₃  │→  actIn(3)
   └──┬──┘  └──┬──┘  └──┬──┘  └──┬──┘
      ↓        ↓        ↓        ↓
   C[i][0]  C[i][1]  C[i][2]  C[i][3]
 ```
 
-Chisel 中用二维 `Array.tabulate` 生成 PE 阵列：
-```scala
-val pes = Array.tabulate(n, n)((_, _) => Module(new PE(dw, aw)))
-for (k <- 0 until n; j <- 0 until n) {
-  pes(k)(j).io.dataIn  := actH(k)(j)
-  actH(k)(j + 1)       := pes(k)(j).io.dataOut
-  pes(k)(j).io.psumIn  := psumV(k)(j)
-  psumV(k + 1)(j)      := pes(k)(j).io.psumOut
-}
-```
+- 激活值水平流动 (→)，部分和垂直累加 (↓)
+- PE 内部: `psumOut = psumIn + weightReg × dataIn`（寄存器输出）
+- Skewed feeding: 2N-1=7 个注入周期 + N=4 个排空周期
 
-### Skewed Feeding (斜向注入)
+### 1.4 ScalarUnit 执行流程
 
 ```
-时钟周期:    0       1       2       3       4       5       6
-─────────────────────────────────────────────────────────────────
-Row 0 输入: A[0][0] A[1][0] A[2][0] A[3][0]   0       0       0
-Row 1 输入:   0     A[0][1] A[1][1] A[2][1] A[3][1]   0       0
-Row 2 输入:   0       0     A[0][2] A[1][2] A[2][2] A[3][2]   0
-Row 3 输入:   0       0       0     A[0][3] A[1][3] A[2][3] A[3][3]
+     ┌──────┐
+     │ IDLE │
+     └──┬───┘
+  start │
+        ▼
+     ┌──────┐     ┌────────┐
+ ┌──►│FETCH │────►│ DECODE │
+ │   └──────┘     └───┬────┘
+ │                    │
+ │   ├── NOP ─────────────────────────► PC++ ──┐
+ │   ├── HALT ────────────────────────► HALTED │
+ │   ├── LOAD ──► LOAD0→LOAD1→LOAD2 ──────────┤  (N 行循环)
+ │   ├── STORE ─► STORE0→STORE1 ───────────────┤  (N 行循环)
+ │   ├── MATMUL ► 等待 cubeDone ───────────────┤
+ │   ├── VECADD/RELU ► 等待 vecDone ───────────┤
+ │   └── DMA_LOAD/STORE ► 等待 dmaDone ────────┤
+ │                                              │
+ └──────────────────────────────────────────────┘
 ```
 
-总共需要 2N-1 = 7 个注入周期，加上 N = 4 个排空周期。
+### 1.5 指令集 (9 条)
 
-### 结果捕获时序
+| 操作码 | 助记符     | 编码格式                                      | 功能                           |
+|--------|-----------|-----------------------------------------------|-------------------------------|
+| 0x0    | NOP       | N-type                                        | 空操作                         |
+| 0x1    | HALT      | N-type                                        | 停机                           |
+| 0x2    | LOAD      | M-type: [27:26]buf [19:4]ub_addr              | UB → 内部缓存                  |
+| 0x3    | STORE     | M-type: [27:26]buf [19:4]ub_addr              | 内部缓存 → UB                  |
+| 0x4    | MATMUL    | C-type                                        | C = A × W (4×4, INT8→INT32)   |
+| 0x5    | VECADD    | V-type: [27:22]src1 [21:16]src2 [15:10]dst    | 向量加法 (4路×32bit)           |
+| 0x6    | RELU      | V-type: [27:22]src1 [15:10]dst                | max(0, x)                      |
+| 0x8    | DMA_LOAD  | D-type: [27:20]ub_base [19:4]hbm_base         | HBM → UB (N 行)               |
+| 0x9    | DMA_STORE | D-type: [27:20]ub_base [19:4]hbm_base         | UB → HBM (N 行)               |
 
-C[i][j] 在绝对周期 `i + j + N` 时出现在底部：
+### 1.6 性能计数器
 
-```
-周期:  4    5    6    7    8    9    10
-      C00  C01  C02  C03
-      C10  C11  C12  C13
-      C20  C21  C22  C23
-      C30  C31  C32  C33
-```
+| 计数器              | 触发条件                          | 含义                    |
+|---------------------|-----------------------------------|------------------------|
+| `totalCycles`       | start → halted 每周期 +1          | 总执行周期              |
+| `instrNop/Halt/...` | 离开 sDecode 时按 opLat 分类      | 各类指令执行次数        |
+| `cubeTotalCycles`   | cubeStart → cubeDone              | MATMUL 总耗时           |
+| `cubeComputeCycles` | CubeUnit 在 sFeed 状态            | SA 有效计算周期         |
+| `bubbleCycles`      | Scalar 等待 Cube/Vector/DMA       | 流水线气泡              |
+| `ubReads/ubWrites`  | Scalar 的 UB 读/写                | UB 访存次数             |
+| `dmaLoadCount`      | 离开 sDecode 时 opLat==DMA_LOAD   | DMA 加载次数            |
+| `dmaStoreCount`     | 离开 sDecode 时 opLat==DMA_STORE  | DMA 存储次数            |
+| `dmaTotalCycles`    | dmaStart → dmaDone                | DMA 总耗时              |
 
-## 模块层次
+**派生指标**:
+- Cube 利用率 = `cubeComputeCycles / cubeTotalCycles`
+- DMA 占比 = `dmaTotalCycles / totalCycles`
 
-```
-ToyAscendTop
-├── InstrMem                     指令存储器 (Mem, 256 × 32-bit, 组合读)
-├── UnifiedBuffer                统一缓存 (SyncReadMem, 1024 × 128-bit, 双端口)
-└── AiCore
-    ├── ScalarUnit               标量单元 (取指/译码/控制 FSM, 11 状态)
-    ├── CubeUnit                 矩阵运算单元
-    │   └── SystolicArray        4×4 收缩阵列
-    │       └── PE [4][4]        16 个处理单元
-    └── VectorUnit               向量运算单元 (VECADD / RELU)
-```
+### 1.7 示例：完整流水线性能数据
 
-## 指令集
-
-7 条指令，32 位固定宽度编码，4 位操作码。
-
-| 操作码 | 助记符  | 类型   | 功能                              |
-|--------|---------|--------|-----------------------------------|
-| 0x0    | NOP     | N-type | 空操作                            |
-| 0x1    | HALT    | N-type | 停机                              |
-| 0x2    | LOAD    | M-type | 从 Unified Buffer 加载到内部缓存  |
-| 0x3    | STORE   | M-type | 从内部缓存写回 Unified Buffer     |
-| 0x4    | MATMUL  | C-type | 4×4 矩阵乘法 C = A × W (INT8→INT32) |
-| 0x5    | VECADD  | V-type | 向量加法 (4 路, 32 位)            |
-| 0x6    | RELU    | V-type | ReLU 激活函数: max(0, x)          |
-
-### 指令编码格式
+程序: `DMA_LOAD×2 → LOAD×2 → MATMUL → STORE → DMA_STORE → HALT` (HBM latency=5)
 
 ```
-N-type (NOP, HALT):
-┌──────────┬────────────────────────────┐
-│ [31:28]  │ [27:0]                     │
-│ opcode   │ reserved                   │
-└──────────┴────────────────────────────┘
-
-M-type (LOAD, STORE):
-┌──────────┬────────┬──────────┬─────────────────┬────────┐
-│ [31:28]  │[27:26] │ [25:20]  │ [19:4]          │ [3:0]  │
-│ opcode   │buf_sel │ reg_addr │ mem_addr         │ size   │
-└──────────┴────────┴──────────┴─────────────────┴────────┘
-  buf_sel: 00=L0_A(权重) 01=L0_B(激活) 10=L0_C(结果) 11=VEC
-
-C-type (MATMUL):
-┌──────────┬────────────────────────────┐
-│ [31:28]  │ [27:0]                     │
-│ opcode   │ reserved                   │
-└──────────┴────────────────────────────┘
-
-V-type (VECADD, RELU):
-┌──────────┬────────┬────────┬────────┬──────────┐
-│ [31:28]  │[27:22] │[21:16] │[15:10] │ [9:0]    │
-│ opcode   │ src1   │ src2   │ dst    │ reserved │
-└──────────┴────────┴────────┴────────┴──────────┘
+Total cycles:      139
+DMA total cycles:  71  (51%)
+Cube total:        16
+Cube compute:      7   (利用率 43.8%)
 ```
 
-## ScalarUnit 执行流程
+---
 
-ScalarUnit 是整个 AiCore 的控制中心，采用顺序执行的 FSM（11 个状态）：
+## 二、英伟达 GPU
 
-```
-         ┌──────┐
-         │ IDLE │◄──── rst / 完成
-         └──┬───┘
-     start  │
-            ▼
-         ┌──────┐
-    ┌───►│FETCH │ ◄─── PC 指向 InstrMem
-    │    └──┬───┘
-    │       │
-    │       ▼
-    │    ┌──────┐
-    │    │DECODE│ ◄─── 译码操作码，锁存字段
-    │    └──┬───┘
-    │       │
-    │       ├── NOP ──────────────────────► PC++ ──┐
-    │       ├── HALT ─────────────────────► HALTED │
-    │       │                                      │
-    │       ├── LOAD ──► LOAD0 → LOAD1 → LOAD2 ───┤ (循环 N 行)
-    │       │            发起UB读  保持addr  存入缓存│
-    │       │                                      │
-    │       ├── STORE ─► STORE0 → STORE1 ──────────┤ (循环 N 行)
-    │       │            写入UB    下一行           │
-    │       │                                      │
-    │       ├── MATMUL ► MATMUL ───────────────────┤ (等待 cubeDone)
-    │       │            启动CubeUnit               │
-    │       │                                      │
-    │       └── VEC ───► VEC ──────────────────────┤ (等待 vecDone)
-    │                    启动VectorUnit             │
-    │                                              │
-    └──────────────────────────────────────────────┘
-```
-
-## 数据通路
-
-一次完整的矩阵乘法执行流程：
+### 2.1 整体架构
 
 ```
-1. LOAD L0_B (激活矩阵 A)
-   UB[0] ──SyncReadMem──► ScalarUnit ──pack──► actBuf(0)
-   UB[1] ──SyncReadMem──► ScalarUnit ──pack──► actBuf(1)
-   UB[2] ──SyncReadMem──► ScalarUnit ──pack──► actBuf(2)
-   UB[3] ──SyncReadMem──► ScalarUnit ──pack──► actBuf(3)
-
-2. LOAD L0_A (权重矩阵 W)
-   UB[4] ──SyncReadMem──► ScalarUnit ──pack──► weightBuf(0)
-   ...
-
-3. MATMUL
-   weightBuf ──────────────────────────► CubeUnit ──► 加载权重到 PE
-   actBuf ──► CubeUnit (skewing) ────► SystolicArray ──► 逐周期注入
-                                                              │
-   resultReg ◄──────────────────────────────────────── 底部捕获结果
-
-4. STORE L0_C (结果矩阵 C)
-   cubeResult(0) ──► ScalarUnit ──write──► UB[8]
-   cubeResult(1) ──► ScalarUnit ──write──► UB[9]
-   cubeResult(2) ──► ScalarUnit ──write──► UB[10]
-   cubeResult(3) ──► ScalarUnit ──write──► UB[11]
+┌─────────────────────────────────────────────────────────────┐
+│                        ToyGpuTop                             │
+│                                                              │
+│  ┌──────────────┐    ┌─────────────────────────────────┐     │
+│  │ InstrMem      │    │ GlobalMem (片外语义)             │     │
+│  │ 256×32b       │    │ Mem, 1024×128b                  │     │
+│  │ 共享, 组合读  │    │ 延迟在 Warp 内部建模 (memLatency)│     │
+│  └───────┬──────┘    └───────────┬─────────────────────┘     │
+│          │                       │                           │
+│  ┌───────▼───────────────────────▼───────────────────────┐   │
+│  │                         SM                             │   │
+│  │                                                        │   │
+│  │  WarpScheduler (Round-Robin)                           │   │
+│  │       │                                                │   │
+│  │  ┌────▼────┐ ┌────────┐ ┌────────┐ ┌────────┐         │   │
+│  │  │ Warp 0  │ │ Warp 1 │ │ Warp 2 │ │ Warp 3 │         │   │
+│  │  │ 4 lanes │ │ 4 lanes│ │ 4 lanes│ │ 4 lanes│         │   │
+│  │  │ PC+RegF │ │ PC+RegF│ │ PC+RegF│ │ PC+RegF│         │   │
+│  │  │ CudaCore│ │ CudaCore│ │ CudaCore│ │ CudaCore│       │   │
+│  │  │ ×4      │ │ ×4     │ │ ×4     │ │ ×4     │         │   │
+│  │  └─────────┘ └────────┘ └────────┘ └────────┘         │   │
+│  │                                                        │   │
+│  │  SharedMem (片上, SyncReadMem, 256×128b)               │   │
+│  └────────────────────────────────────────────────────────┘   │
+│                                                              │
+│  GpuPerfCounters (4 个计数器)                                │
+└──────────────────────────────────────────────────────────────┘
 ```
 
-## 关键设计参数
+### 2.2 SIMT 执行模型
 
-| 参数           | 值       | 说明                          |
-|----------------|----------|-------------------------------|
-| DataWidth      | 8 bit    | 输入数据精度 (INT8)           |
-| AccWidth       | 32 bit   | 累加器精度 (INT32)            |
-| ArraySize      | 4        | 收缩阵列维度 (4×4)           |
-| UBDepth        | 1024     | Unified Buffer 深度           |
-| UB 字宽        | 128 bit  | Vec(4, SInt(32.W))            |
-| IMEMDepth      | 256      | 指令存储器深度                |
-| InstrWidth     | 32 bit   | 指令宽度                      |
-| MATMUL 延迟    | ~15 周期 | 含权重加载+注入+排空          |
+- 4 个 Warp，每个 Warp 4 条 lane（线程），共享一个 PC
+- 所有 Warp 执行同一个程序（SPMD 模式）
+- WarpScheduler: Round-Robin 调度，跳过 halted 和 sMemWait 的 Warp
+- CudaCore: 单周期 ALU (ADD/MUL/MAD)，寄存器输出
 
-## 与真实昇腾的对比
+### 2.3 存储层次
 
-| 特性         | 本项目 (玩具版)              | 真实昇腾 310/910              |
+| 存储       | 类型        | 深度  | 字宽    | 读延迟           | 语义         |
+|------------|-------------|-------|---------|------------------|-------------|
+| GlobalMem  | Mem         | 1024  | 128 bit | Warp 内部计数器 (默认10) | 片外 DRAM   |
+| SharedMem  | SyncReadMem | 256   | 128 bit | 1 周期           | 片上 SM 内   |
+| InstrMem   | Mem         | 256   | 32 bit  | 0 (组合读)       | 片上 I-Cache |
+| RegFile    | RegInit     | 16×4  | 32 bit  | 0 (组合读)       | 每 Warp 私有 |
+
+GlobalMem 延迟建模：Warp 执行 LD 时，数据组合读出并锁存到 `memDataLat`，然后在 `sMemWait` 状态等待 `memLatency` 个周期。此期间 scheduler 可以调度其他 Warp（latency hiding）。
+
+### 2.4 指令集 (8 条)
+
+指令格式: `[31:28]op [27:24]rd [23:20]rs1 [19:16]rs2 [15:12]rs3 [11:0]imm12`
+
+| 操作码 | 助记符 | 功能                          |
+|--------|--------|-------------------------------|
+| 0x0    | NOP    | 空操作                        |
+| 0x1    | HALT   | 停机                          |
+| 0x2    | LD     | Rd = GlobalMem[Rs1 + imm]     |
+| 0x3    | ST     | GlobalMem[Rs1 + imm] = Rs2    |
+| 0x4    | ADD    | Rd = Rs1 + Rs2                |
+| 0x5    | MUL    | Rd = Rs1 × Rs2                |
+| 0x6    | MAD    | Rd = Rs1 × Rs2 + Rs3          |
+| 0x7    | SHM    | SharedMem 操作 (imm[11]=方向) |
+
+### 2.5 性能数据
+
+Vector ADD 程序 (`LD×2 → ADD → ST → HALT`)：
+
+| 指标 | gmemLatency=1 | gmemLatency=10 |
+|------|---------------|----------------|
+| Total cycles | 14 | 28 |
+| Active warp-cycles | 14 | 16 |
+| Gmem reads | 8 | 8 |
+| Gmem writes | 4 | 4 |
+
+延迟从 1→10 时总周期翻倍，但 scheduler 有效调度其他 Warp 隐藏了部分延迟。
+
+---
+
+## 三、共享组件 (common 包)
+
+| 模块 | 功能 |
+|------|------|
+| `Params` | 共享参数 (DataWidth=8, AccWidth=32) |
+| `MAC` | 乘累加单元: out = a×b + c (寄存器输出) |
+| `LatencyMem` | 可配置延迟存储, valid/ready 握手 + 直接访问端口 |
+| `SramMem` | DualPortSram / SinglePortRom 封装 |
+
+---
+
+## 四、NPU vs GPU 对比
+
+| 特性         | 玩具版昇腾 NPU              | 玩具版英伟达 GPU               |
 |--------------|------------------------------|-------------------------------|
-| Cube 单元    | 4×4 收缩阵列, INT8           | 16×16 收缩阵列, FP16/INT8    |
-| Vector 单元  | 4 路 VECADD/RELU             | 256 路, 丰富的激活函数        |
-| Scalar 单元  | 顺序 FSM                     | 完整 RISC 标量处理器          |
-| 缓存层次     | UB (单级)                    | L0A/L0B/L0C/L1/UB 多级       |
-| 指令集       | 7 条指令                     | 数百条指令, 支持流水线        |
-| AI Core 数量 | 1 个                         | 2~32 个, 支持并行             |
-| 数据流       | Weight-Stationary            | 多种数据流模式                |
-| 实现语言     | Chisel 7 (Scala)             | 商业 EDA 工具链               |
+| 计算模型     | 收缩阵列 (矩阵乘法)          | SIMT (标量 ALU × 并行线程)     |
+| 计算单元     | 4×4 PE 阵列, INT8→INT32     | 4 CudaCore × 4 Warp, INT32   |
+| 调度         | 顺序 FSM                     | Round-Robin Warp Scheduler    |
+| 片上存储     | UB (1024×128b)               | SharedMem (256×128b) + RegFile|
+| 片外存储     | HBM (LatencyMem, 4096 深度)  | GlobalMem (Mem + 延迟计数器)   |
+| 数据搬运     | DMA 引擎 (显式指令)           | LD/ST 指令 (Warp 内延迟等待)  |
+| 指令数       | 9 条                         | 8 条                          |
+| 延迟隐藏     | 无 (顺序执行)                 | Warp 切换                     |
 
-## 构建与测试
+---
+
+## 五、构建与测试
 
 ```bash
-sbt test                              # 运行全部 13 个测试用例
-sbt "testOnly ascend.PETest"          # 仅测试 PE 单元
-sbt "testOnly ascend.SystolicArrayTest" # 仅测试收缩阵列
-sbt "testOnly ascend.VectorUnitTest"  # 仅测试 Vector 单元
-sbt "testOnly ascend.CubeUnitTest"    # 仅测试 Cube 单元
-sbt "testOnly ascend.IntegrationTest" # 运行集成测试 (完整程序执行)
-sbt "runMain ascend.Elaborate"        # 生成 SystemVerilog 到 generated/
+sbt test                                # 全部 28 个测试
+sbt "testOnly ascend.*"                 # NPU 测试 (17 cases)
+sbt "testOnly gpu.*"                    # GPU 测试 (7 cases)
+sbt "testOnly common.*"                 # 共享组件测试 (4 cases)
+sbt "testOnly ascend.DmaTest"           # DMA 测试
+sbt "testOnly ascend.PerfCounterTest"   # NPU 性能计数器测试
+sbt "testOnly gpu.GpuIntegrationTest"   # GPU 集成测试 (含延迟对比)
+sbt "runMain top.Elaborate"             # 生成 SystemVerilog
 ```
 
-## 项目结构
+## 六、电路可视化
+
+### 模块层次图 (Graphviz)
+
+```bash
+sbt "runMain top.Visualize"
+```
+
+输出 `docs/diagrams/{architecture,systolic_array}.svg`。依赖: `graphviz`
+
+### RTL 原理图 (Yosys + netlistsvg)
+
+```bash
+sbt "runMain top.Elaborate"
+bash tools/gen_schematic.sh
+```
+
+输出 `docs/schematics/{PE,VectorUnit,CubeUnit}.svg`。依赖: `yosys`, `netlistsvg`
+
+---
+
+## 七、项目结构
 
 ```
 vibe-processor/
-├── build.sbt                              sbt 构建配置 (Chisel 7.9.0)
-├── src/
-│   ├── main/scala/ascend/
-│   │   ├── AscendParams.scala             全局参数
-│   │   ├── PE.scala                       处理单元 (MAC + 寄存器)
-│   │   ├── SystolicArray.scala            4×4 Weight-Stationary 收缩阵列
-│   │   ├── CubeUnit.scala                 Cube 单元 (封装收缩阵列 + skewing)
-│   │   ├── VectorUnit.scala               向量单元 (VECADD / RELU)
-│   │   ├── ScalarUnit.scala               标量单元 (取指/译码/控制 FSM)
-│   │   ├── Memory.scala                   UnifiedBuffer + InstrMem
-│   │   ├── AiCore.scala                   AI Core (集成三个执行单元)
-│   │   ├── ToyAscendTop.scala             芯片顶层
-│   │   └── Elaborate.scala                Verilog 生成入口
-│   └── test/scala/ascend/
-│       ├── PETest.scala                   PE 单元测试 (3 cases)
-│       ├── SystolicArrayTest.scala        收缩阵列测试 (3 cases)
-│       ├── VectorUnitTest.scala           Vector 单元测试 (3 cases)
-│       ├── CubeUnitTest.scala             Cube 单元测试 (2 cases)
-│       └── IntegrationTest.scala          集成测试 (2 cases, 完整程序执行)
-├── generated/                             生成的 SystemVerilog (sbt runMain)
+├── build.sbt                              Chisel 7.9.0 + ScalaTest
+├── src/main/scala/
+│   ├── common/                            共享基础组件
+│   │   ├── Params.scala                   DataWidth=8, AccWidth=32
+│   │   ├── MAC.scala                      乘累加单元
+│   │   ├── LatencyMem.scala               可配置延迟存储 (HBM/DRAM 建模)
+│   │   └── SramMem.scala                  SRAM 封装
+│   ├── ascend/                            昇腾 NPU
+│   │   ├── AscendParams.scala             NPU 参数 (含 HBM)
+│   │   ├── PE.scala                       处理单元
+│   │   ├── SystolicArray.scala            4×4 收缩阵列
+│   │   ├── CubeUnit.scala                 Cube 单元
+│   │   ├── VectorUnit.scala               向量单元
+│   │   ├── ScalarUnit.scala               标量控制单元 (12 态 FSM)
+│   │   ├── DmaEngine.scala                DMA 引擎 (HBM↔UB)
+│   │   ├── Memory.scala                   UB + InstrMem
+│   │   ├── AiCore.scala                   集成 + 性能计数器
+│   │   ├── ToyAscendTop.scala             NPU 顶层
+│   │   └── PerfCounters.scala             计数器 Bundle (17 个)
+│   ├── gpu/                               英伟达 GPU
+│   │   ├── GpuParams.scala                GPU 参数 + 操作码
+│   │   ├── CudaCore.scala                 CUDA Core (ADD/MUL/MAD)
+│   │   ├── Warp.scala                     Warp (4 线程 SIMT + 延迟模型)
+│   │   ├── WarpScheduler.scala            Round-Robin 调度器
+│   │   ├── SM.scala                       Streaming Multiprocessor
+│   │   └── ToyGpuTop.scala               GPU 顶层 + 性能计数器
+│   └── top/                               跨项目工具
+│       ├── Elaborate.scala                Verilog 生成 (NPU + GPU)
+│       └── Visualize.scala                Graphviz 架构图生成
+├── src/test/scala/
+│   ├── common/LatencyMemTest.scala        4 cases
+│   ├── ascend/                            17 cases
+│   │   ├── PETest / SystolicArrayTest / VectorUnitTest / CubeUnitTest
+│   │   ├── IntegrationTest / PerfCounterTest
+│   │   └── DmaTest
+│   └── gpu/                               7 cases
+│       ├── CudaCoreTest
+│       └── GpuIntegrationTest
+├── tools/gen_schematic.sh                 Yosys+netlistsvg 原理图
+├── generated/                             生成的 SystemVerilog
+│   ├── ascend/ + ascend/yosys/
+│   └── gpu/ + gpu/yosys/
 └── docs/
+    ├── diagrams/                          Graphviz 层次图
+    ├── schematics/                        RTL 原理图
     ├── isa.md                             指令集参考 (英文)
     └── architecture_zh.md                 架构文档 (本文件)
 ```
