@@ -28,4 +28,6 @@ class PerfCounters extends Bundle {
   val dmaLoadCount      = UInt(16.W)
   val dmaStoreCount     = UInt(16.W)
   val dmaTotalCycles    = UInt(32.W)
+  // Overlap profiling (compute + DMA overlap)
+  val overlapCycles     = UInt(32.W)
 }

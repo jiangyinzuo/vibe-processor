@@ -98,16 +98,18 @@ class ToyAscendTop(
     core.io.imemData := imem.io.instr
     if (i == 0) imem.io.addr := core.io.imemAddr
 
-    // Per-core UB
+    // Per-core UB (dual-port: A for Scalar, B for DMA)
     ub.io.portA.en    := core.io.ubEn
     ub.io.portA.we    := core.io.ubWe
     ub.io.portA.addr  := core.io.ubAddr
     ub.io.portA.wdata := core.io.ubWdata
     core.io.ubRdata   := ub.io.portA.rdata
-    ub.io.portB.en    := false.B
-    ub.io.portB.we    := false.B
-    ub.io.portB.addr  := 0.U
-    ub.io.portB.wdata := VecInit.fill(n)(0.S(aw.W))
+
+    ub.io.portB.en    := core.io.ubEnB
+    ub.io.portB.we    := core.io.ubWeB
+    ub.io.portB.addr  := core.io.ubAddrB
+    ub.io.portB.wdata := core.io.ubWdataB
+    core.io.ubRdataB  := ub.io.portB.rdata
 
     // Core ↔ L2
     core.io.l2Rdata := l2.read(core.io.l2Addr)

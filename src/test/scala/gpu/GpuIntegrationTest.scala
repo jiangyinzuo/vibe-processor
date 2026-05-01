@@ -53,7 +53,7 @@ class GpuIntegrationTest extends AnyFunSpec with ChiselSim {
     dut.io.gmemExt.we.poke(false.B)
   }
 
-  def runToHalt(dut: ToyGpuTop, maxCycles: Int = 1000): Int = {
+  def runToHalt(dut: ToyGpuTop, maxCycles: Int = 600): Int = {
     dut.io.start.poke(true.B)
     dut.clock.step()
     dut.io.start.poke(false.B)

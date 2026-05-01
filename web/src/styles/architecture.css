@@ -1,0 +1,222 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
+    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background-color: #f5f5f5;
+}
+
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+.app-header {
+  background-color: #37474F;
+  color: white;
+  padding: 20px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+}
+
+.app-header h1 {
+  font-size: 24px;
+  font-weight: bold;
+}
+
+.arch-selector {
+  display: flex;
+  gap: 10px;
+}
+
+.arch-selector button {
+  padding: 10px 20px;
+  border: 2px solid #90CAF9;
+  background-color: transparent;
+  color: white;
+  font-size: 14px;
+  font-weight: bold;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: all 0.3s;
+}
+
+.arch-selector button:hover {
+  background-color: #90CAF9;
+  color: #37474F;
+}
+
+.arch-selector button.active {
+  background-color: #90CAF9;
+  color: #37474F;
+}
+
+.app-main {
+  flex: 1;
+  overflow: hidden;
+  background-color: #ECEFF1;
+}
+
+/* Architecture Viewer */
+.architecture-viewer {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.viewer-controls {
+  background-color: #CFD8DC;
+  padding: 15px 20px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 2px solid #37474F;
+}
+
+.control-buttons {
+  display: flex;
+  gap: 10px;
+}
+
+.control-buttons button {
+  padding: 8px 16px;
+  border: 2px solid #37474F;
+  background-color: white;
+  color: #37474F;
+  font-size: 13px;
+  font-weight: bold;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: all 0.3s;
+}
+
+.control-buttons button:hover {
+  background-color: #37474F;
+  color: white;
+}
+
+.control-buttons button.active {
+  background-color: #1976D2;
+  color: white;
+  border-color: #1976D2;
+}
+
+/* Breadcrumb */
+.breadcrumb {
+  display: flex;
+  align-items: center;
+  font-size: 14px;
+  color: #263238;
+}
+
+.breadcrumb-item {
+  display: flex;
+  align-items: center;
+}
+
+.breadcrumb-separator {
+  margin: 0 8px;
+  color: #546E7A;
+  font-weight: bold;
+}
+
+.breadcrumb-link {
+  background: none;
+  border: none;
+  color: #1976D2;
+  font-size: 14px;
+  font-weight: bold;
+  cursor: pointer;
+  text-decoration: underline;
+  padding: 4px 8px;
+  border-radius: 4px;
+  transition: background-color 0.2s;
+}
+
+.breadcrumb-link:hover:not(:disabled) {
+  background-color: rgba(25, 118, 210, 0.1);
+}
+
+.breadcrumb-link:disabled {
+  color: #263238;
+  text-decoration: none;
+  cursor: default;
+}
+
+/* SVG Canvas */
+.architecture-svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  background-color: #FAFAFA;
+  cursor: grab;
+}
+
+.architecture-svg:active {
+  cursor: grabbing;
+}
+
+/* Module Node */
+.module-node rect,
+.module-node ellipse {
+  transition: stroke 0.2s, stroke-width 0.2s;
+}
+
+.module-node text {
+  user-select: none;
+  pointer-events: none;
+}
+
+/* Connection */
+.connection line {
+  transition: stroke 0.2s;
+}
+
+/* Tooltip */
+.tooltip {
+  pointer-events: none;
+}
+
+/* Animations */
+@keyframes pulse {
+  0%, 100% {
+    opacity: 0.8;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.data-flow-animation circle {
+  animation: pulse 1s infinite;
+}
+
+/* Performance Overlay */
+.perf-overlay-group text {
+  font-family: 'Courier New', monospace;
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+  .app-header {
+    flex-direction: column;
+    gap: 15px;
+  }
+
+  .viewer-controls {
+    flex-direction: column;
+    gap: 10px;
+    align-items: flex-start;
+  }
+}

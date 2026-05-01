@@ -68,12 +68,7 @@ class SystolicArrayTest extends AnyFunSpec with ChiselSim {
 
     it("computes A * I = A (identity weight)") {
       simulate(new SystolicArray) { dut =>
-        val a = Array(
-          Array(1, 2, 3, 4),
-          Array(5, 6, 7, 8),
-          Array(9, 10, 11, 12),
-          Array(13, 14, 15, 16)
-        )
+        val a = Array.tabulate(N, N)((i, j) => i * N + j + 1)
         val w = Array.tabulate(N, N)((i, j) => if (i == j) 1 else 0)
         val expected = matmul(a, w)
         val result   = runMatmul(dut, a, w)
@@ -90,12 +85,7 @@ class SystolicArrayTest extends AnyFunSpec with ChiselSim {
     it("computes I * W = W (identity activation)") {
       simulate(new SystolicArray) { dut =>
         val a = Array.tabulate(N, N)((i, j) => if (i == j) 1 else 0)
-        val w = Array(
-          Array(2, 3, 4, 5),
-          Array(6, 7, 8, 9),
-          Array(10, 11, 12, 13),
-          Array(14, 15, 16, 17)
-        )
+        val w = Array.tabulate(N, N)((i, j) => i * N + j + 2)
         val expected = matmul(a, w)
         val result   = runMatmul(dut, a, w)
 
@@ -110,18 +100,8 @@ class SystolicArrayTest extends AnyFunSpec with ChiselSim {
 
     it("computes general matrix multiplication") {
       simulate(new SystolicArray) { dut =>
-        val a = Array(
-          Array(1, 2, 3, 4),
-          Array(5, 6, 7, 8),
-          Array(2, 3, 1, 4),
-          Array(7, 1, 5, 3)
-        )
-        val w = Array(
-          Array(1, 0, 2, 1),
-          Array(3, 1, 0, 2),
-          Array(2, 4, 1, 3),
-          Array(0, 2, 3, 1)
-        )
+        val a = Array.tabulate(N, N)((i, j) => (i + j + 1) % 8)
+        val w = Array.tabulate(N, N)((i, j) => (i * 2 + j) % 8)
         val expected = matmul(a, w)
         val result   = runMatmul(dut, a, w)
 

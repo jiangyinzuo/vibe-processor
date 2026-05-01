@@ -1,85 +1,297 @@
 direction: down
 
-title: |md
-  # 英伟达 GPU — 多SM架构 (4×SM)
-| {near: top-center}
-
-imem: InstrMem\n(共享 256×32b) {
-  shape: page
-  style.fill: "#E3F2FD"
+# 全局连线样式：使用直线
+connection: {
+  style.stroke-width: 2
+  style.border-radius: 0
 }
 
-gmem: GlobalMem\n(片外语义 Mem\n4096×128b\n延迟在Warp内建模) {
+title: |md
+  # 英伟达 GPU — 多SM架构 (4×SM)
+| {
+  near: top-center
+  style.font-size: 20
+  style.bold: true
+}
+
+# 全局样式配置
+vars: {
+  mem-color: "#E8EAF6"
+  sched-color: "#B0BEC5"
+  warp-color: "#81C784"
+  border-color: "#37474F"
+}
+
+imem: InstrMem\n共享 256×32b {
+  shape: rectangle
+  style: {
+    fill: "#BBDEFB"
+    stroke: ${border-color}
+    stroke-width: 2
+    font-size: 13
+  }
+}
+
+gmem: GlobalMem\n片外 4096×128b\nLatency in Warp {
   shape: cylinder
-  style.fill: "#FFCDD2"
+  style: {
+    fill: "#CFD8DC"
+    stroke: ${border-color}
+    stroke-width: 3
+    font-size: 14
+    bold: true
+  }
 }
 
 sm0: SM 0 {
-  style.fill: "#E8F5E9"
-
-  sched: WarpScheduler\n(Round-Robin) {
-    shape: hexagon
-    style.fill: "#C8E6C9"
+  style: {
+    fill: "#ECEFF1"
+    stroke: ${border-color}
+    stroke-width: 4
+    font-size: 16
+    bold: true
+    shadow: true
   }
 
-  w0: Warp 0\n4×CudaCore\n+ RegFile {
-    style.fill: "#FFE0B2"
+  sched: WarpScheduler\nRound-Robin {
+    shape: rectangle
+    style: {
+      fill: ${sched-color}
+      stroke: ${border-color}
+      stroke-width: 2
+      font-size: 13
+      bold: true
+    }
   }
-  w1: Warp 1 {style.fill: "#FFE0B2"}
-  w2: Warp 2 {style.fill: "#FFE0B2"}
-  w3: Warp 3 {style.fill: "#FFE0B2"}
 
-  shmem: SharedMem\n(256×128b) {
-    shape: cylinder
-    style.fill: "#FFF9C4"
+  w0: Warp 0\n4×CudaCore\nRegFile 16×32b {
+    style: {
+      fill: ${warp-color}
+      stroke: ${border-color}
+      stroke-width: 2
+      font-size: 12
+    }
+  }
+  w1: Warp 1\n4×CudaCore\nRegFile {
+    style: {
+      fill: ${warp-color}
+      stroke: ${border-color}
+      stroke-width: 2
+      font-size: 12
+    }
+  }
+  w2: Warp 2\n4×CudaCore\nRegFile {
+    style: {
+      fill: ${warp-color}
+      stroke: ${border-color}
+      stroke-width: 2
+      font-size: 12
+    }
+  }
+  w3: Warp 3\n4×CudaCore\nRegFile {
+    style: {
+      fill: ${warp-color}
+      stroke: ${border-color}
+      stroke-width: 2
+      font-size: 12
+    }
   }
 
-  sched -> w0: grant
-  sched -> w1: grant
-  sched -> w2: grant
-  sched -> w3: grant
+  shmem: SharedMem\n256×128b {
+    shape: rectangle
+    style: {
+      fill: ${mem-color}
+      stroke: ${border-color}
+      stroke-width: 2
+      font-size: 13
+    }
+  }
+
+  sched -> w0: grant {style.stroke-width: 2}
+  sched -> w1: grant {style.stroke-width: 2}
+  sched -> w2: grant {style.stroke-width: 2}
+  sched -> w3: grant {style.stroke-width: 2}
 }
 
 sm1: SM 1 {
-  style.fill: "#E8F5E9"
-  sched: Scheduler {shape: hexagon; style.fill: "#C8E6C9"}
-  w0: Warp 0..3 {style.fill: "#FFE0B2"}
-  shmem: SharedMem {shape: cylinder; style.fill: "#FFF9C4"}
-  sched -> w0
+  style: {
+    fill: "#ECEFF1"
+    stroke: ${border-color}
+    stroke-width: 4
+    font-size: 16
+    bold: true
+    shadow: true
+  }
+  sched: Scheduler {
+    shape: rectangle
+    style: {
+      fill: ${sched-color}
+      stroke: ${border-color}
+      stroke-width: 2
+      font-size: 13
+    }
+  }
+  w0: Warp 0..3 {
+    style: {
+      fill: ${warp-color}
+      stroke: ${border-color}
+      stroke-width: 2
+      font-size: 12
+    }
+  }
+  shmem: SharedMem {
+    shape: rectangle
+    style: {
+      fill: ${mem-color}
+      stroke: ${border-color}
+      stroke-width: 2
+      font-size: 13
+    }
+  }
+  sched -> w0 {style.stroke-width: 2}
 }
 
 sm2: SM 2 {
-  style.fill: "#E8F5E9"
-  sched: Scheduler {shape: hexagon; style.fill: "#C8E6C9"}
-  w0: Warp 0..3 {style.fill: "#FFE0B2"}
-  shmem: SharedMem {shape: cylinder; style.fill: "#FFF9C4"}
-  sched -> w0
+  style: {
+    fill: "#ECEFF1"
+    stroke: ${border-color}
+    stroke-width: 4
+    font-size: 16
+    bold: true
+    shadow: true
+  }
+  sched: Scheduler {
+    shape: rectangle
+    style: {
+      fill: ${sched-color}
+      stroke: ${border-color}
+      stroke-width: 2
+      font-size: 13
+    }
+  }
+  w0: Warp 0..3 {
+    style: {
+      fill: ${warp-color}
+      stroke: ${border-color}
+      stroke-width: 2
+      font-size: 12
+    }
+  }
+  shmem: SharedMem {
+    shape: rectangle
+    style: {
+      fill: ${mem-color}
+      stroke: ${border-color}
+      stroke-width: 2
+      font-size: 13
+    }
+  }
+  sched -> w0 {style.stroke-width: 2}
 }
 
 sm3: SM 3 {
-  style.fill: "#E8F5E9"
-  sched: Scheduler {shape: hexagon; style.fill: "#C8E6C9"}
-  w0: Warp 0..3 {style.fill: "#FFE0B2"}
-  shmem: SharedMem {shape: cylinder; style.fill: "#FFF9C4"}
-  sched -> w0
+  style: {
+    fill: "#ECEFF1"
+    stroke: ${border-color}
+    stroke-width: 4
+    font-size: 16
+    bold: true
+    shadow: true
+  }
+  sched: Scheduler {
+    shape: rectangle
+    style: {
+      fill: ${sched-color}
+      stroke: ${border-color}
+      stroke-width: 2
+      font-size: 13
+    }
+  }
+  w0: Warp 0..3 {
+    style: {
+      fill: ${warp-color}
+      stroke: ${border-color}
+      stroke-width: 2
+      font-size: 12
+    }
+  }
+  shmem: SharedMem {
+    shape: rectangle
+    style: {
+      fill: ${mem-color}
+      stroke: ${border-color}
+      stroke-width: 2
+      font-size: 13
+    }
+  }
+  sched -> w0 {style.stroke-width: 2}
 }
 
-imem -> sm0.sched
-imem -> sm1.sched
-imem -> sm2.sched
-imem -> sm3.sched
-
-gmem -> sm0.w0: LD/ST {style.stroke: "#C62828"}
-gmem -> sm1.w0: LD/ST {style.stroke: "#C62828"}
-gmem -> sm2.w0: LD/ST {style.stroke: "#C62828"}
-gmem -> sm3.w0: LD/ST {style.stroke: "#C62828"}
-
-perf: PerfCounters\n(per-SM × 4) {
-  shape: document
-  style.fill: "#F3E5F5"
+imem -> sm0.sched {
+  style: {
+    stroke: "#1976D2"
+    stroke-width: 2
+    stroke-dash: 3
+  }
+}
+imem -> sm1.sched {
+  style: {
+    stroke: "#1976D2"
+    stroke-width: 2
+    stroke-dash: 3
+  }
+}
+imem -> sm2.sched {
+  style: {
+    stroke: "#1976D2"
+    stroke-width: 2
+    stroke-dash: 3
+  }
+}
+imem -> sm3.sched {
+  style: {
+    stroke: "#1976D2"
+    stroke-width: 2
+    stroke-dash: 3
+  }
 }
 
-sm0 -> perf
-sm1 -> perf
-sm2 -> perf
-sm3 -> perf
+gmem -> sm0.w0: LD/ST {
+  style: {
+    stroke: "#D32F2F"
+    stroke-width: 3
+  }
+}
+gmem -> sm1.w0: LD/ST {
+  style: {
+    stroke: "#D32F2F"
+    stroke-width: 3
+  }
+}
+gmem -> sm2.w0: LD/ST {
+  style: {
+    stroke: "#D32F2F"
+    stroke-width: 3
+  }
+}
+gmem -> sm3.w0: LD/ST {
+  style: {
+    stroke: "#D32F2F"
+    stroke-width: 3
+  }
+}
+
+perf: PerfCounters\nper-SM × 4 {
+  shape: rectangle
+  style: {
+    fill: "#E1BEE7"
+    stroke: ${border-color}
+    stroke-width: 2
+    font-size: 13
+  }
+}
+
+sm0 -> perf {style.stroke-width: 2; style.stroke-dash: 3}
+sm1 -> perf {style.stroke-width: 2; style.stroke-dash: 3}
+sm2 -> perf {style.stroke-width: 2; style.stroke-dash: 3}
+sm3 -> perf {style.stroke-width: 2; style.stroke-dash: 3}

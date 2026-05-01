@@ -53,7 +53,7 @@ class CubeUnit(
 
   // Skewed activation: at cycle feedCnt, actIn(k) = A[feedCnt-k][k]
   for (k <- 0 until n) {
-    val idx = (feedCnt - k.U)(1, 0) // truncate to 2 bits for Vec(4) indexing
+    val idx = (feedCnt - k.U)(log2Ceil(n) - 1, 0) // 扩展到 log2Ceil(n) bits
     val valid = state === sFeed && feedCnt >= k.U && (feedCnt - k.U) < n.U
     sa.io.actIn(k) := Mux(valid, io.actData(idx)(k), 0.S(dw.W))
   }

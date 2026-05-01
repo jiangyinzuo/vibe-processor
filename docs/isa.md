@@ -1,43 +1,85 @@
 # 指令集参考
 
-## 昇腾 NPU 指令集 (9 条)
+## 昇腾 NPU 指令集 (10 条)
 
 32 位固定宽度编码，4 位操作码。
 
 ### 编码格式
 
 ```
-N-type (NOP, HALT):     [31:28] 操作码  [27:0] 保留
-M-type (LOAD, STORE):   [31:28] 操作码  [27:26] 缓存选择  [19:4] UB地址
-V-type (VECADD, RELU):  [31:28] 操作码  [27:22] 源1  [21:16] 源2  [15:10] 目标
-C-type (MATMUL):        [31:28] 操作码  [27:0] 保留
-D-type (DMA):           [31:28] 操作码  [27:20] UB基地址  [19:4] L2基地址
+N-type (NOP, HALT, DMA_WAIT): [31:28] 操作码  [27:0] 保留
+M-type (LOAD, STORE):         [31:28] 操作码  [27:26] 缓存选择  [19:4] UB地址
+V-type (VECADD, RELU):        [31:28] 操作码  [27:22] 源1  [21:16] 源2  [15:10] 目标
+C-type (MATMUL):              [31:28] 操作码  [27:0] 保留
+D-type (DMA_LOAD, DMA_STORE): [31:28] 操作码  [27:20] UB基地址  [19:4] L2基地址
 ```
 
 ### 指令表
 
-| 操作码 | 助记符 | 功能 |
-|--------|--------|------|
-| 0x0 | NOP | 空操作 |
-| 0x1 | HALT | 停机 |
-| 0x2 | LOAD | UB → 内部缓存 (N 行) |
-| 0x3 | STORE | 内部缓存 → UB (N 行) |
-| 0x4 | MATMUL | C = A × W (4×4, INT8→INT32) |
-| 0x5 | VECADD | 向量加法 (4路×32bit) |
-| 0x6 | RELU | max(0, x) |
-| 0x8 | DMA_LOAD | L2 → UB (N 行, 自动加 coreId 偏移) |
-| 0x9 | DMA_STORE | UB → L2 (N 行, 自动加 coreId 偏移) |
+| 操作码 | 助记符 | 功能 | 行为 |
+|--------|--------|------|------|
+| 0x0 | NOP | 空操作 | 阻塞 |
+| 0x1 | HALT | 停机 | 阻塞 |
+| 0x2 | LOAD | UB → 内部缓存 (N 行) | 阻塞 |
+| 0x3 | STORE | 内部缓存 → UB (N 行) | 阻塞 |
+| 0x4 | MATMUL | C = A × W (8×8, INT8→INT32) | 阻塞 |
+| 0x5 | VECADD | 向量加法 (8路×32bit) | 阻塞 |
+| 0x6 | RELU | max(0, x) | 阻塞 |
+| 0x8 | DMA_LOAD | L2 → UB (N 行, 自动加 coreId 偏移) | **非阻塞** |
+| 0x9 | DMA_STORE | UB → L2 (N 行, 自动加 coreId 偏移) | **非阻塞** |
+| 0xA | DMA_WAIT | 等待所有 DMA 完成 | 阻塞 |
+
+### 缓存选择 (LOAD/STORE)
+
+| 值 | 符号 | 含义 |
+|----|------|------|
+| 0 | L0_A | 权重缓存 (Weight Buffer) |
+| 1 | L0_B | 激活缓存 (Activation Buffer) |
+| 2 | L0_C | 结果缓存 (Result Buffer) |
 
 ### 示例程序
 
+#### 顺序执行（无 Overlap）
+
 ```asm
-DMA_LOAD  ub=0, l2=0       ; L2[coreId*1024 + 0..3] → UB[0..3]
-DMA_LOAD  ub=4, l2=4       ; L2[coreId*1024 + 4..7] → UB[4..7]
-LOAD      L0_B, 0           ; UB[0..3] → 激活缓存
-LOAD      L0_A, 4           ; UB[4..7] → 权重缓存
-MATMUL                       ; C = A × W
-STORE     L0_C, 8           ; 结果 → UB[8..11]
-DMA_STORE ub=8, l2=8       ; UB[8..11] → L2[coreId*1024 + 8..11]
+DMA_LOAD  ub=0, l2=0       ; L2[coreId*1024 + 0..7] → UB[0..7] (非阻塞)
+DMA_LOAD  ub=8, l2=8       ; L2[coreId*1024 + 8..15] → UB[8..15] (非阻塞)
+DMA_WAIT                    ; 等待所有 DMA 完成
+LOAD      L0_B, 0           ; UB[0..7] → 激活缓存
+LOAD      L0_A, 8           ; UB[8..15] → 权重缓存
+MATMUL                      ; C = A × W
+STORE     L0_C, 16          ; 结果 → UB[16..23]
+DMA_STORE ub=16, l2=16     ; UB[16..23] → L2[coreId*1024 + 16..23] (非阻塞)
+DMA_WAIT                    ; 等待 DMA_STORE 完成
+HALT
+```
+
+#### 流水线 Overlap
+
+```asm
+; Tile 0: 初始加载
+DMA_LOAD  ub=0, l2=0       ; 加载 tile 0 activation
+DMA_LOAD  ub=8, l2=8       ; 加载 tile 0 weight
+DMA_WAIT
+LOAD      L0_B, 0
+LOAD      L0_A, 8
+
+; Tile 1: 预取 + 计算重叠
+DMA_LOAD  ub=0, l2=16      ; 预取 tile 1 (非阻塞)
+DMA_LOAD  ub=8, l2=24      ; 预取 tile 1 (非阻塞)
+MATMUL                      ; 计算 tile 0 (与 DMA 重叠!)
+STORE     L0_C, 32
+DMA_WAIT                    ; 等待 tile 1 数据
+LOAD      L0_B, 0           ; 加载 tile 1
+LOAD      L0_A, 8
+
+; Tile 2: 继续重叠
+DMA_LOAD  ub=0, l2=32      ; 预取 tile 2
+DMA_LOAD  ub=8, l2=40
+MATMUL                      ; 计算 tile 1 (与 DMA 重叠!)
+STORE     L0_C, 40
+DMA_WAIT
+...
 HALT
 ```
 

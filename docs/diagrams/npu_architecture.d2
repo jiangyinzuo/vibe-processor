@@ -1,98 +1,243 @@
 direction: down
 
+# 全局连线样式：使用直线
+connection: {
+  style.stroke-width: 2
+  style.border-radius: 0
+}
+
 title: |md
   # 昇腾 NPU — 多核架构 (2×AiCore)
-|
-
-HBM: HBM\n(片外 LatencyMem\n4096×128b, 延迟=10) {
-  shape: cylinder
-  style.fill: "#FFCDD2"
+| {
+  near: top-center
+  style.font-size: 20
+  style.bold: true
 }
 
-L2: L2 Buffer\n(片上共享 Mem\n2048×128b) {
-  shape: cylinder
-  style.fill: "#FFF9C4"
+# 全局样式配置
+vars: {
+  mem-color: "#E8EAF6"
+  ctrl-color: "#B0BEC5"
+  compute-color: "#90CAF9"
+  dma-color: "#FFB74D"
+  border-color: "#37474F"
 }
 
-HBM -> L2: 外部预加载
+HBM: HBM\n片外 LatencyMem\n4096×128b\nLatency=10 {
+  shape: cylinder
+  style: {
+    fill: "#CFD8DC"
+    stroke: ${border-color}
+    stroke-width: 3
+    font-size: 14
+    bold: true
+  }
+}
 
-imem: InstrMem\n(共享 256×32b) {
-  shape: page
-  style.fill: "#E3F2FD"
+L2: L2 Buffer\n片上共享\n2048×128b {
+  shape: rectangle
+  style: {
+    fill: ${mem-color}
+    stroke: ${border-color}
+    stroke-width: 3
+    font-size: 14
+    bold: true
+    shadow: true
+  }
+}
+
+HBM -> L2: 外部预加载 {
+  style: {
+    stroke: "#546E7A"
+    stroke-width: 3
+    font-size: 12
+  }
+}
+
+imem: InstrMem\n共享 256×32b {
+  shape: rectangle
+  style: {
+    fill: "#BBDEFB"
+    stroke: ${border-color}
+    stroke-width: 2
+    font-size: 13
+  }
 }
 
 core0: AiCore 0 {
-  style.fill: "#E8F5E9"
-
-  scalar: ScalarUnit\n(12态 FSM) {
-    style.fill: "#FFCCBC"
+  style: {
+    fill: "#ECEFF1"
+    stroke: ${border-color}
+    stroke-width: 4
+    font-size: 16
+    bold: true
+    shadow: true
   }
 
-  dma: DMA (L2-UB) {
-    shape: parallelogram
-    style.fill: "#FFE0B2"
-  }
-
-  ub: "UB₀ (私有 256×128b)" {
-    shape: cylinder
-    style.fill: "#FFF9C4"
-  }
-
-  cube: CubeUnit {
-    style.fill: "#FFF3E0"
-    sa: "SystolicArray 4×4 PE" {
-      style.fill: "#FFE0B2"
+  scalar: ScalarUnit\n12-State FSM {
+    style: {
+      fill: ${ctrl-color}
+      stroke: ${border-color}
+      stroke-width: 2
+      font-size: 13
     }
   }
 
-  vec: "VectorUnit (VECADD/RELU)" {
-    style.fill: "#D1C4E9"
+  dma: DMA Engine\nL2↔UB {
+    shape: rectangle
+    style: {
+      fill: ${dma-color}
+      stroke: ${border-color}
+      stroke-width: 2
+      font-size: 13
+      bold: true
+    }
   }
 
-  scalar -> dma: DMA指令
-  dma -> ub
-  scalar -> ub: LOAD/STORE
-  scalar -> cube.sa: MATMUL
-  scalar -> vec: VECADD/RELU
+  ub: "UB₀\n私有 256×128b" {
+    shape: rectangle
+    style: {
+      fill: ${mem-color}
+      stroke: ${border-color}
+      stroke-width: 2
+      font-size: 13
+    }
+  }
+
+  cube: CubeUnit {
+    style: {
+      fill: "#E3F2FD"
+      stroke: ${border-color}
+      stroke-width: 2
+      font-size: 13
+    }
+    sa: "SystolicArray\n4×4 PE" {
+      style: {
+        fill: ${compute-color}
+        stroke: ${border-color}
+        stroke-width: 2
+        font-size: 12
+        bold: true
+      }
+    }
+  }
+
+  vec: "VectorUnit\nVECADD/RELU" {
+    style: {
+      fill: ${compute-color}
+      stroke: ${border-color}
+      stroke-width: 2
+      font-size: 12
+    }
+  }
+
+  scalar -> dma: DMA指令 {style.stroke-width: 2}
+  dma -> ub {style.stroke-width: 2; style.stroke: "#FF6F00"}
+  scalar -> ub: LOAD/STORE {style.stroke-width: 2}
+  scalar -> cube.sa: MATMUL {style.stroke-width: 2}
+  scalar -> vec: VECADD/RELU {style.stroke-width: 2}
 }
 
 core1: AiCore 1 {
-  style.fill: "#E8F5E9"
-
-  scalar: ScalarUnit {
-    style.fill: "#FFCCBC"
+  style: {
+    fill: "#ECEFF1"
+    stroke: ${border-color}
+    stroke-width: 4
+    font-size: 16
+    bold: true
+    shadow: true
   }
 
-  dma: DMA (L2-UB) {
-    shape: parallelogram
-    style.fill: "#FFE0B2"
-  }
-
-  ub: "UB₁ (私有 256×128b)" {
-    shape: cylinder
-    style.fill: "#FFF9C4"
-  }
-
-  cube: CubeUnit {
-    style.fill: "#FFF3E0"
-    sa: "SystolicArray 4×4 PE" {
-      style.fill: "#FFE0B2"
+  scalar: ScalarUnit\n12-State FSM {
+    style: {
+      fill: ${ctrl-color}
+      stroke: ${border-color}
+      stroke-width: 2
+      font-size: 13
     }
   }
 
-  vec: VectorUnit {
-    style.fill: "#D1C4E9"
+  dma: DMA Engine\nL2↔UB {
+    shape: rectangle
+    style: {
+      fill: ${dma-color}
+      stroke: ${border-color}
+      stroke-width: 2
+      font-size: 13
+      bold: true
+    }
   }
 
-  scalar -> dma: DMA指令
-  dma -> ub
-  scalar -> ub: LOAD/STORE
-  scalar -> cube.sa: MATMUL
-  scalar -> vec: VECADD/RELU
+  ub: "UB₁\n私有 256×128b" {
+    shape: rectangle
+    style: {
+      fill: ${mem-color}
+      stroke: ${border-color}
+      stroke-width: 2
+      font-size: 13
+    }
+  }
+
+  cube: CubeUnit {
+    style: {
+      fill: "#E3F2FD"
+      stroke: ${border-color}
+      stroke-width: 2
+      font-size: 13
+    }
+    sa: "SystolicArray\n4×4 PE" {
+      style: {
+        fill: ${compute-color}
+        stroke: ${border-color}
+        stroke-width: 2
+        font-size: 12
+        bold: true
+      }
+    }
+  }
+
+  vec: VectorUnit\nVECADD/RELU {
+    style: {
+      fill: ${compute-color}
+      stroke: ${border-color}
+      stroke-width: 2
+      font-size: 12
+    }
+  }
+
+  scalar -> dma: DMA指令 {style.stroke-width: 2}
+  dma -> ub {style.stroke-width: 2; style.stroke: "#FF6F00"}
+  scalar -> ub: LOAD/STORE {style.stroke-width: 2}
+  scalar -> cube.sa: MATMUL {style.stroke-width: 2}
+  scalar -> vec: VECADD/RELU {style.stroke-width: 2}
 }
 
-imem -> core0.scalar: instr
-imem -> core1.scalar: instr
+imem -> core0.scalar: instr {
+  style: {
+    stroke: "#1976D2"
+    stroke-width: 2
+    stroke-dash: 3
+  }
+}
+imem -> core1.scalar: instr {
+  style: {
+    stroke: "#1976D2"
+    stroke-width: 2
+    stroke-dash: 3
+  }
+}
 
-L2 -> core0.dma: "Core 0 切片 [0..1023]"
-L2 -> core1.dma: "Core 1 切片 [1024..2047]"
+L2 -> core0.dma: "Core 0\n[0..1023]" {
+  style: {
+    stroke: "#FF6F00"
+    stroke-width: 3
+    font-size: 11
+  }
+}
+L2 -> core1.dma: "Core 1\n[1024..2047]" {
+  style: {
+    stroke: "#FF6F00"
+    stroke-width: 3
+    font-size: 11
+  }
+}

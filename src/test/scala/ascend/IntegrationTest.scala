@@ -16,6 +16,7 @@ class IntegrationTest extends AnyFunSpec with ChiselSim {
     (0x8L << 28) | ((ubBase & 0xFF).toLong << 20) | ((l2Base & 0xFFFF).toLong << 4)
   def encDmaStore(ubBase: Int, l2Base: Int): Long =
     (0x9L << 28) | ((ubBase & 0xFF).toLong << 20) | ((l2Base & 0xFFFF).toLong << 4)
+  def encDmaWait: Long = 0xAL << 28
   def encMatmul: Long = 0x4L << 28
   def encNop: Long    = 0x0L
   def encHalt: Long   = 0x1L << 28
@@ -90,43 +91,59 @@ class IntegrationTest extends AnyFunSpec with ChiselSim {
       simulate(new ToyAscendTop) { dut =>
         initDut(dut)
 
-        val a = Array(
-          Array(1, 2, 3, 4), Array(5, 6, 7, 8),
-          Array(2, 3, 1, 4), Array(7, 1, 5, 3)
-        )
-        val w = Array(
-          Array(1, 0, 2, 1), Array(3, 1, 0, 2),
-          Array(2, 4, 1, 3), Array(0, 2, 3, 1)
-        )
+        // 动态生成 N×N 测试矩阵
+        val a = Array.tabulate(N, N)((i, j) => (i + j + 1) % 10)
+        val w = Array.tabulate(N, N)((i, j) => (i * 2 + j + 1) % 10)
         val expected = Array.tabulate(N, N)((i, j) =>
           (0 until N).map(k => a(i)(k) * w(k)(j)).sum
         )
 
-        // Preload L2 (core 0 slice: addr 0..7)
+        // Preload L2 (core 0 slice: addr 0..N-1 for A, N..2N-1 for W)
         for (i <- 0 until N) writeL2(dut, i, a(i))
-        for (i <- 0 until N) writeL2(dut, 4 + i, w(i))
+        for (i <- 0 until N) writeL2(dut, N + i, w(i))
 
         val program = Seq(
-          encDmaLoad(ubBase = 0, l2Base = 0),   // L2[0..3] → UB[0..3]
-          encDmaLoad(ubBase = 4, l2Base = 4),   // L2[4..7] → UB[4..7]
-          encLoad(1, 0),                         // UB → act_buf
-          encLoad(0, 4),                         // UB → weight_buf
-          encMatmul,
-          encStore(2, 8),                        // result → UB[8..11]
-          encDmaStore(ubBase = 8, l2Base = 8),  // UB[8..11] → L2[8..11]
+          encDmaLoad(ubBase = 0, l2Base = 0),       // L2[0..N-1] → UB[0..N-1] (non-blocking)
+          encDmaLoad(ubBase = N, l2Base = N),       // L2[N..2N-1] → UB[N..2N-1] (non-blocking)
+          encDmaWait,                                // Wait for DMAs to complete
+          encLoad(1, 0),                             // UB[0..N-1] → act_buf (L0A)
+          encLoad(0, N),                             // UB[N..2N-1] → weight_buf (L0B)
+          encMatmul,                                 // L0A × L0B → L0C
+          encStore(2, 2 * N),                        // L0C → UB[2N..3N-1]
+          encDmaStore(ubBase = 2 * N, l2Base = 2 * N), // UB[2N..3N-1] → L2[2N..3N-1] (non-blocking)
+          encDmaWait,                                // Wait for DMA_STORE to complete
           encHalt
         )
         loadProgram(dut, program)
         val cycles = runToHalt(dut)
 
-        // Read result from L2 (core 0 slice: addr 8..11)
+        // Read result from L2 (core 0 slice: addr 2N..3N-1)
         for (i <- 0 until N) {
-          val row = readL2(dut, 8 + i)
+          val row = readL2(dut, 2 * N + i)
           for (j <- 0 until N) {
             assert(row(j) == expected(i)(j),
               s"C[$i][$j]: got ${row(j)}, expected ${expected(i)(j)}")
           }
         }
+
+        // 性能统计
+        val perf = dut.io.perf(0).peek()
+        val totalCycles = perf.totalCycles.litValue.toInt
+        val cubeComputeCycles = perf.cubeComputeCycles.litValue.toInt
+        val dmaTotalCycles = perf.dmaTotalCycles.litValue.toInt
+        val bubbleCycles = perf.bubbleCycles.litValue.toInt
+        val overlapCycles = perf.overlapCycles.litValue.toInt
+
+        println(s"\n=== NPU 性能统计 (${N}×${N} 矩阵乘法) ===")
+        println(f"总周期数:           $totalCycles%4d")
+        println(f"Cube 计算周期:      $cubeComputeCycles%4d")
+        println(f"DMA 周期:           $dmaTotalCycles%4d")
+        println(f"重叠周期:           $overlapCycles%4d")
+        println(f"气泡周期:           $bubbleCycles%4d")
+        println(f"计算效率:           ${cubeComputeCycles * 100.0 / totalCycles}%.1f%%")
+        println(f"DMA 占比:           ${dmaTotalCycles * 100.0 / totalCycles}%.1f%%")
+        println(f"重叠率:             ${if (dmaTotalCycles > 0) overlapCycles * 100.0 / dmaTotalCycles else 0.0}%.1f%%")
+        println(f"理论峰值利用率:     ${cubeComputeCycles * 100.0 / (cubeComputeCycles + bubbleCycles)}%.1f%%")
       }
     }
   }

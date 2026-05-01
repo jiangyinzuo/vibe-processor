@@ -106,7 +106,7 @@ class SystolicArray(
     for (j <- 0 until n) {
       val rawIdx = absCycle - (j + n).U
       when(absCycle >= (j + n).U && rawIdx < n.U) {
-        resultReg(rawIdx(1, 0))(j) := psumV(n)(j)
+        resultReg(rawIdx(log2Ceil(n) - 1, 0))(j) := psumV(n)(j)
       }
     }
   }

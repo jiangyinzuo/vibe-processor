@@ -18,12 +18,18 @@ class AiCore(
     val halted   = Output(Bool())
     val imemAddr = Output(UInt(8.W))
     val imemData = Input(UInt(AscendParams.InstrWidth.W))
-    // UB port (arbitrated between Scalar and DMA)
+    // UB port A (Scalar LOAD/STORE)
     val ubEn     = Output(Bool())
     val ubWe     = Output(Bool())
     val ubAddr   = Output(UInt(AscendParams.UBAddrW.W))
     val ubWdata  = Output(Vec(n, SInt(aw.W)))
     val ubRdata  = Input(Vec(n, SInt(aw.W)))
+    // UB port B (DMA)
+    val ubEnB    = Output(Bool())
+    val ubWeB    = Output(Bool())
+    val ubAddrB  = Output(UInt(AscendParams.UBAddrW.W))
+    val ubWdataB = Output(Vec(n, SInt(aw.W)))
+    val ubRdataB = Input(Vec(n, SInt(aw.W)))
     // L2 port (DMA ↔ shared L2Buffer)
     val l2En     = Output(Bool())
     val l2We     = Output(Bool())
@@ -62,9 +68,34 @@ class AiCore(
   vector.io.src2     := scalar.io.vecSrc2
   scalar.io.vecDst   := vector.io.dst
 
-  // === DMA: L2 ↔ UB (simplified, L2 is SyncReadMem with 1-cycle read) ===
-  // Instead of the full DmaEngine with valid/ready, we use a simple FSM
-  // that reads/writes L2 directly (like the old LOAD/STORE for UB)
+  // === DMA Queue: FIFO for non-blocking DMA requests ===
+  val dmaQueueDepth = 4
+  val dmaQueue = RegInit(VecInit.fill(dmaQueueDepth)(0.U.asTypeOf(new Bundle {
+    val isStore = Bool()
+    val hbmAddr = UInt(AscendParams.HBMAddrW.W)
+    val ubAddr  = UInt(AscendParams.UBAddrW.W)
+  })))
+  val dmaQueueValid = RegInit(VecInit.fill(dmaQueueDepth)(false.B))
+  val dmaQueueHead  = RegInit(0.U(log2Ceil(dmaQueueDepth).W))
+  val dmaQueueTail  = RegInit(0.U(log2Ceil(dmaQueueDepth).W))
+
+  val dmaQueueEmpty = !dmaQueueValid.asUInt.orR
+  val dmaQueueFull  = dmaQueueValid.asUInt.andR
+
+  // Connect queue status to Scalar
+  scalar.io.dmaQueueEmpty := dmaQueueEmpty
+  scalar.io.dmaQueueFull  := dmaQueueFull
+
+  // Enqueue logic
+  when(scalar.io.dmaQueueEnq && !dmaQueueFull) {
+    dmaQueue(dmaQueueTail).isStore := scalar.io.dmaEnqIsStore
+    dmaQueue(dmaQueueTail).hbmAddr := scalar.io.dmaEnqHbmAddr
+    dmaQueue(dmaQueueTail).ubAddr  := scalar.io.dmaEnqUbAddr
+    dmaQueueValid(dmaQueueTail)    := true.B
+    dmaQueueTail := (dmaQueueTail + 1.U) % dmaQueueDepth.U
+  }
+
+  // === DMA: L2 ↔ UB (queue-driven FSM) ===
 
   val sDmaIdle :: sDmaLoadRd :: sDmaLoadWait :: sDmaLoadWb :: sDmaStoreRd :: sDmaStoreWait :: sDmaStoreWr :: sDmaDone :: Nil = Enum(8)
   val dmaState  = RegInit(sDmaIdle)
@@ -77,29 +108,35 @@ class AiCore(
   // L2 address offset: coreId * L2SliceSize
   val l2Offset = (coreId * AscendParams.L2SliceSize).U(AscendParams.L2AddrW.W)
 
-  // DMA control from Scalar
-  scalar.io.dmaDone := dmaState === sDmaDone
-
   // Default L2 signals
   val dmaL2En    = WireDefault(false.B)
   val dmaL2We    = WireDefault(false.B)
   val dmaL2Addr  = WireDefault(0.U(AscendParams.L2AddrW.W))
   val dmaL2Wdata = WireDefault(VecInit.fill(n)(0.S(aw.W)))
 
-  // Default DMA UB signals
+  // Default DMA UB signals (will connect to UB portB)
   val dmaUbEn    = WireDefault(false.B)
   val dmaUbWe    = WireDefault(false.B)
   val dmaUbAddr  = WireDefault(0.U(AscendParams.UBAddrW.W))
   val dmaUbWdata = WireDefault(VecInit.fill(n)(0.S(aw.W)))
 
+  // Connect DMA to UB port B early (before switch statement)
+  io.ubEnB    := dmaUbEn
+  io.ubWeB    := dmaUbWe
+  io.ubAddrB  := dmaUbAddr
+  io.ubWdataB := dmaUbWdata
+  val dmaUbRdata = io.ubRdataB
+
   switch(dmaState) {
     is(sDmaIdle) {
-      when(scalar.io.dmaStart) {
-        dmaL2Base  := scalar.io.dmaHbmAddr +& l2Offset  // "hbmAddr" field repurposed as L2 offset
-        dmaUbBase  := scalar.io.dmaUbAddr
-        dmaIsStore := scalar.io.dmaIsStore
+      when(!dmaQueueEmpty) {
+        // Dequeue and start processing
+        val req = dmaQueue(dmaQueueHead)
+        dmaL2Base  := req.hbmAddr +& l2Offset  // "hbmAddr" field repurposed as L2 offset
+        dmaUbBase  := req.ubAddr
+        dmaIsStore := req.isStore
         dmaRowCnt  := 0.U
-        dmaState   := Mux(scalar.io.dmaIsStore, sDmaStoreRd, sDmaLoadRd)
+        dmaState   := Mux(req.isStore, sDmaStoreRd, sDmaLoadRd)
       }
     }
 
@@ -141,22 +178,26 @@ class AiCore(
       dmaL2En    := true.B
       dmaL2We    := true.B
       dmaL2Addr  := dmaL2Base + dmaRowCnt
-      dmaL2Wdata := io.ubRdata
+      dmaL2Wdata := dmaUbRdata  // Read from UB port B
       dmaRowCnt  := dmaRowCnt + 1.U
       dmaState   := Mux(dmaRowCnt === (n - 1).U, sDmaDone, sDmaStoreRd)
     }
 
     is(sDmaDone) {
+      // Dequeue completed request
+      dmaQueueValid(dmaQueueHead) := false.B
+      dmaQueueHead := (dmaQueueHead + 1.U) % dmaQueueDepth.U
       dmaState := sDmaIdle
     }
   }
 
-  // UB Port A arbitration: DMA has priority when active
-  val dmaActive = dmaUbEn
-  io.ubEn    := Mux(dmaActive, dmaUbEn,    scalar.io.ubEn)
-  io.ubWe    := Mux(dmaActive, dmaUbWe,    scalar.io.ubWe)
-  io.ubAddr  := Mux(dmaActive, dmaUbAddr,  scalar.io.ubAddr)
-  io.ubWdata := Mux(dmaActive, dmaUbWdata, scalar.io.ubWdata)
+  // UB Port A: Scalar LOAD/STORE (UB ↔ L0)
+  // UB Port B: DMA (L2 ↔ UB) - already connected above
+  // This allows simultaneous Scalar and DMA access to UB
+  io.ubEn    := scalar.io.ubEn
+  io.ubWe    := scalar.io.ubWe
+  io.ubAddr  := scalar.io.ubAddr
+  io.ubWdata := scalar.io.ubWdata
   scalar.io.ubRdata := io.ubRdata
 
   // L2 port
@@ -204,7 +245,7 @@ class AiCore(
   val scalarWaiting = running && (
     (scalar.io.dbgState === 8.U && !scalar.io.cubeStart) ||
     (scalar.io.dbgState === 9.U && !scalar.io.vecStart) ||
-    (scalar.io.dbgState === 10.U && !scalar.io.dmaStart)
+    (scalar.io.dbgState === 10.U && dmaQueueEmpty)  // Updated: wait for queue empty
   )
   when(scalarWaiting) { perf.bubbleCycles := perf.bubbleCycles + 1.U }
 
@@ -219,4 +260,9 @@ class AiCore(
   // DMA cycles
   val dmaRunning = dmaState =/= sDmaIdle && dmaState =/= sDmaDone
   when(dmaRunning) { perf.dmaTotalCycles := perf.dmaTotalCycles + 1.U }
+
+  // Overlap cycles: compute and DMA running simultaneously
+  when(cubeActive && dmaRunning) {
+    perf.overlapCycles := perf.overlapCycles + 1.U
+  }
 }

@@ -13,6 +13,7 @@ class PerfCounterTest extends AnyFunSpec with ChiselSim {
     (0x8L << 28) | ((ubBase & 0xFF).toLong << 20) | ((l2Base & 0xFFFF).toLong << 4)
   def encDmaStore(ubBase: Int, l2Base: Int): Long =
     (0x9L << 28) | ((ubBase & 0xFF).toLong << 20) | ((l2Base & 0xFFFF).toLong << 4)
+  def encDmaWait: Long = 0xAL << 28
   def encLoad(bufSel: Int, memAddr: Int): Long =
     (0x2L << 28) | ((bufSel & 0x3).toLong << 26) | ((memAddr & 0xFFFF).toLong << 4)
   def encStore(bufSel: Int, memAddr: Int): Long =
@@ -107,18 +108,20 @@ class PerfCounterTest extends AnyFunSpec with ChiselSim {
       simulate(new ToyAscendTop) { dut =>
         initDut(dut)
 
-        val a = Array(Array(1, 2, 3, 4), Array(5, 6, 7, 8),
-                      Array(2, 3, 1, 4), Array(7, 1, 5, 3))
-        val w = Array(Array(1, 0, 2, 1), Array(3, 1, 0, 2),
-                      Array(2, 4, 1, 3), Array(0, 2, 3, 1))
+        // Generate N×N test matrices
+        val a = Array.tabulate(N, N)((i, j) => (i + j + 1) % 8)
+        val w = Array.tabulate(N, N)((i, j) => (i * 2 + j + 1) % 8)
         for (i <- 0 until N) writeL2(dut, i, a(i))
-        for (i <- 0 until N) writeL2(dut, 4 + i, w(i))
+        for (i <- 0 until N) writeL2(dut, N + i, w(i))
 
         val program = Seq(
-          encDmaLoad(0, 0), encDmaLoad(4, 4),
-          encLoad(1, 0), encLoad(0, 4),
-          encMatmul, encStore(2, 8),
-          encDmaStore(8, 8), encHalt
+          encDmaLoad(0, 0), encDmaLoad(N, N),
+          encDmaWait,
+          encLoad(1, 0), encLoad(0, N),
+          encMatmul, encStore(2, 2*N),
+          encDmaStore(2*N, 2*N),
+          encDmaWait,
+          encHalt
         )
         loadProgram(dut, program)
         runToHalt(dut)

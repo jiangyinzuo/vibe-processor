@@ -1,43 +1,226 @@
 direction: down
 
+# 全局连线样式：使用直线
+connection: {
+  style.stroke-width: 3
+  style.border-radius: 0
+}
+
 title: |md
   # 存储层次对比
-| {near: top-center}
+| {
+  near: top-center
+  style.font-size: 20
+  style.bold: true
+}
+
+# 全局样式配置
+vars: {
+  border-color: "#37474F"
+  l0-color: "#FFCC80"
+  l1-color: "#A5D6A7"
+  l2-color: "#FFF59D"
+  hbm-color: "#CFD8DC"
+}
 
 npu: 昇腾 NPU {
-  style.fill: "#E3F2FD"
+  style: {
+    fill: "#ECEFF1"
+    stroke: ${border-color}
+    stroke-width: 4
+    font-size: 16
+    bold: true
+    shadow: true
+  }
 
-  hbm: HBM\n片外 4096×128b\n延迟=10 {shape: cylinder; style.fill: "#FFCDD2"}
-  l2: L2 Buffer\n片上共享 2048×128b\n延迟=1 {shape: cylinder; style.fill: "#FFF9C4"}
-  ub: UB (per-core)\n片上私有 256×128b\n延迟=1 {shape: cylinder; style.fill: "#C8E6C9"}
-  l0: weightBuf / actBuf\n寄存器级\n延迟=0 {shape: cylinder; style.fill: "#FFE0B2"}
+  hbm: HBM\n片外 4096×128b\nLatency=10 {
+    shape: cylinder
+    style: {
+      fill: ${hbm-color}
+      stroke: ${border-color}
+      stroke-width: 3
+      font-size: 13
+      bold: true
+    }
+  }
+  l2: L2 Buffer\n片上共享 2048×128b\nLatency=1 {
+    shape: rectangle
+    style: {
+      fill: ${l2-color}
+      stroke: ${border-color}
+      stroke-width: 3
+      font-size: 13
+      bold: true
+    }
+  }
+  ub: UB (per-core)\n片上私有 256×128b\nLatency=1 {
+    shape: rectangle
+    style: {
+      fill: ${l1-color}
+      stroke: ${border-color}
+      stroke-width: 3
+      font-size: 13
+      bold: true
+    }
+  }
+  l0: weightBuf / actBuf\n寄存器级\nLatency=0 {
+    shape: rectangle
+    style: {
+      fill: ${l0-color}
+      stroke: ${border-color}
+      stroke-width: 3
+      font-size: 13
+      bold: true
+    }
+  }
 
-  hbm -> l2: 外部预加载
-  l2 -> ub: DMA_LOAD\nDMA_STORE {style.stroke: "#E65100"}
-  ub -> l0: LOAD\nSTORE {style.stroke: "#2E7D32"}
+  hbm -> l2: 外部预加载 {
+    style: {
+      stroke: "#546E7A"
+      stroke-width: 3
+      font-size: 12
+    }
+  }
+  l2 -> ub: DMA_LOAD\nDMA_STORE {
+    style: {
+      stroke: "#E65100"
+      stroke-width: 3
+      font-size: 12
+      bold: true
+    }
+  }
+  ub -> l0: LOAD\nSTORE {
+    style: {
+      stroke: "#2E7D32"
+      stroke-width: 3
+      font-size: 12
+      bold: true
+    }
+  }
 }
 
 gpu: 英伟达 GPU {
-  style.fill: "#F3E5F5"
+  style: {
+    fill: "#ECEFF1"
+    stroke: ${border-color}
+    stroke-width: 4
+    font-size: 16
+    bold: true
+    shadow: true
+  }
 
-  gmem: GlobalMem\n片外 4096×128b\n延迟=10 (Warp内) {shape: cylinder; style.fill: "#FFCDD2"}
-  shmem: SharedMem (per-SM)\n片上 256×128b\n延迟=1 {shape: cylinder; style.fill: "#FFF9C4"}
-  reg: RegFile (per-Warp)\n16×32b\n延迟=0 {shape: cylinder; style.fill: "#C8E6C9"}
+  gmem: GlobalMem\n片外 4096×128b\nLatency=10 (Warp内) {
+    shape: cylinder
+    style: {
+      fill: ${hbm-color}
+      stroke: ${border-color}
+      stroke-width: 3
+      font-size: 13
+      bold: true
+    }
+  }
+  shmem: SharedMem (per-SM)\n片上 256×128b\nLatency=1 {
+    shape: rectangle
+    style: {
+      fill: ${l2-color}
+      stroke: ${border-color}
+      stroke-width: 3
+      font-size: 13
+      bold: true
+    }
+  }
+  reg: RegFile (per-Warp)\n16×32b\nLatency=0 {
+    shape: rectangle
+    style: {
+      fill: ${l1-color}
+      stroke: ${border-color}
+      stroke-width: 3
+      font-size: 13
+      bold: true
+    }
+  }
 
-  gmem -> reg: LD / ST\n(含延迟等待) {style.stroke: "#C62828"}
-  shmem -> reg: SHM {style.stroke: "#4A148C"}
+  gmem -> reg: LD / ST\n(含延迟等待) {
+    style: {
+      stroke: "#C62828"
+      stroke-width: 3
+      font-size: 12
+      bold: true
+    }
+  }
+  shmem -> reg: SHM {
+    style: {
+      stroke: "#4A148C"
+      stroke-width: 3
+      font-size: 12
+      bold: true
+    }
+  }
 }
 
-real_npu: 真实昇腾 {
-  style.fill: "#ECEFF1"
-  style.stroke-dash: 3
+real_npu: 真实昇腾 (参考) {
+  style: {
+    fill: "#F5F5F5"
+    stroke: ${border-color}
+    stroke-width: 3
+    stroke-dash: 5
+    font-size: 16
+    bold: true
+  }
 
-  r_hbm: HBM {shape: cylinder; style.fill: "#EF9A9A"}
-  r_l2: L2 (共享) {shape: cylinder; style.fill: "#FFF59D"}
-  r_l1: L1 (私有) {shape: cylinder; style.fill: "#A5D6A7"}
-  r_l0: L0A/L0B/L0C {shape: cylinder; style.fill: "#FFCC80"}
+  r_hbm: HBM {
+    shape: cylinder
+    style: {
+      fill: ${hbm-color}
+      stroke: ${border-color}
+      stroke-width: 2
+      font-size: 12
+    }
+  }
+  r_l2: L2 (共享) {
+    shape: rectangle
+    style: {
+      fill: ${l2-color}
+      stroke: ${border-color}
+      stroke-width: 2
+      font-size: 12
+    }
+  }
+  r_l1: L1 (私有) {
+    shape: rectangle
+    style: {
+      fill: ${l1-color}
+      stroke: ${border-color}
+      stroke-width: 2
+      font-size: 12
+    }
+  }
+  r_l0: L0A/L0B/L0C {
+    shape: rectangle
+    style: {
+      fill: ${l0-color}
+      stroke: ${border-color}
+      stroke-width: 2
+      font-size: 12
+    }
+  }
 
-  r_hbm -> r_l2: MTE
-  r_l2 -> r_l1: MTE
-  r_l1 -> r_l0: MTE
+  r_hbm -> r_l2: MTE {
+    style: {
+      stroke: "#546E7A"
+      stroke-width: 2
+    }
+  }
+  r_l2 -> r_l1: MTE {
+    style: {
+      stroke: "#546E7A"
+      stroke-width: 2
+    }
+  }
+  r_l1 -> r_l0: MTE {
+    style: {
+      stroke: "#546E7A"
+      stroke-width: 2
+    }
+  }
 }

@@ -1,0 +1,445 @@
+{
+  "name": "ToyAscendTop",
+  "type": "top",
+  "description": "昇腾 NPU 多核架构 (2×AiCore)",
+  "viewport": {
+    "width": 1400,
+    "height": 900
+  },
+  "modules": [
+    {
+      "id": "hbm",
+      "name": "HBM",
+      "type": "memory",
+      "description": "片外 LatencyMem\n4096×128b\nLatency=10",
+      "position": { "x": 100, "y": 50 },
+      "size": { "width": 180, "height": 120 },
+      "style": {
+        "fill": "#CFD8DC",
+        "stroke": "#37474F",
+        "strokeWidth": 3,
+        "shape": "rectangle"
+      },
+      "metadata": {
+        "capacity": "4096×128b",
+        "latency": 10,
+        "sourceFile": "src/main/scala/common/LatencyMem.scala"
+      }
+    },
+    {
+      "id": "l2",
+      "name": "L2 Buffer",
+      "type": "memory",
+      "description": "片上共享\n2048×128b",
+      "position": { "x": 350, "y": 50 },
+      "size": { "width": 200, "height": 100 },
+      "style": {
+        "fill": "#E8EAF6",
+        "stroke": "#37474F",
+        "strokeWidth": 3,
+        "shape": "rectangle"
+      },
+      "metadata": {
+        "capacity": "2048×128b",
+        "sourceFile": "src/main/scala/ascend/ToyAscendTop.scala:74"
+      }
+    },
+    {
+      "id": "imem",
+      "name": "InstrMem",
+      "type": "memory",
+      "description": "共享 256×32b",
+      "position": { "x": 620, "y": 50 },
+      "size": { "width": 180, "height": 100 },
+      "style": {
+        "fill": "#BBDEFB",
+        "stroke": "#37474F",
+        "strokeWidth": 2,
+        "shape": "rectangle"
+      },
+      "metadata": {
+        "capacity": "256×32b",
+        "sourceFile": "src/main/scala/ascend/ToyAscendTop.scala:50"
+      }
+    },
+    {
+      "id": "aicore0",
+      "name": "AiCore 0",
+      "type": "compute",
+      "description": "AI 核心 0",
+      "position": { "x": 100, "y": 220 },
+      "size": { "width": 500, "height": 600 },
+      "style": {
+        "fill": "#ECEFF1",
+        "stroke": "#37474F",
+        "strokeWidth": 4,
+        "shape": "rectangle"
+      },
+      "metadata": {
+        "coreId": 0,
+        "sourceFile": "src/main/scala/ascend/AiCore.scala"
+      },
+      "children": [
+        {
+          "id": "scalar0",
+          "name": "ScalarUnit",
+          "type": "control",
+          "description": "12-State FSM",
+          "position": { "x": 20, "y": 30 },
+          "size": { "width": 200, "height": 100 },
+          "style": {
+            "fill": "#B0BEC5",
+            "stroke": "#37474F",
+            "strokeWidth": 2,
+            "shape": "rectangle"
+          },
+          "metadata": {
+            "states": 12,
+            "sourceFile": "src/main/scala/ascend/ScalarUnit.scala"
+          }
+        },
+        {
+          "id": "dma0",
+          "name": "DMA Engine",
+          "type": "dma",
+          "description": "L2↔UB",
+          "position": { "x": 260, "y": 30 },
+          "size": { "width": 200, "height": 100 },
+          "style": {
+            "fill": "#FFB74D",
+            "stroke": "#37474F",
+            "strokeWidth": 2,
+            "shape": "rectangle"
+          },
+          "metadata": {
+            "sourceFile": "src/main/scala/ascend/AiCore.scala:69"
+          }
+        },
+        {
+          "id": "ub0",
+          "name": "UB₀",
+          "type": "memory",
+          "description": "私有 256×128b",
+          "position": { "x": 20, "y": 160 },
+          "size": { "width": 440, "height": 100 },
+          "style": {
+            "fill": "#E8EAF6",
+            "stroke": "#37474F",
+            "strokeWidth": 2,
+            "shape": "rectangle"
+          },
+          "metadata": {
+            "capacity": "256×128b",
+            "sourceFile": "src/main/scala/ascend/ToyAscendTop.scala:84"
+          }
+        },
+        {
+          "id": "cube0",
+          "name": "CubeUnit",
+          "type": "compute",
+          "description": "矩阵计算单元",
+          "position": { "x": 20, "y": 290 },
+          "size": { "width": 210, "height": 270 },
+          "style": {
+            "fill": "#E3F2FD",
+            "stroke": "#37474F",
+            "strokeWidth": 2,
+            "shape": "rectangle"
+          },
+          "metadata": {
+            "sourceFile": "src/main/scala/ascend/CubeUnit.scala"
+          },
+          "children": [
+            {
+              "id": "sa0",
+              "name": "SystolicArray",
+              "type": "compute",
+              "description": "4×4 PE",
+              "position": { "x": 15, "y": 50 },
+              "size": { "width": 180, "height": 200 },
+              "style": {
+                "fill": "#90CAF9",
+                "stroke": "#37474F",
+                "strokeWidth": 2,
+                "shape": "rectangle"
+              },
+              "metadata": {
+                "arraySize": "4×4",
+                "sourceFile": "src/main/scala/ascend/SystolicArray.scala"
+              }
+            }
+          ]
+        },
+        {
+          "id": "vec0",
+          "name": "VectorUnit",
+          "type": "compute",
+          "description": "VECADD/RELU",
+          "position": { "x": 260, "y": 290 },
+          "size": { "width": 200, "height": 120 },
+          "style": {
+            "fill": "#90CAF9",
+            "stroke": "#37474F",
+            "strokeWidth": 2,
+            "shape": "rectangle"
+          },
+          "metadata": {
+            "sourceFile": "src/main/scala/ascend/VectorUnit.scala"
+          }
+        }
+      ]
+    },
+    {
+      "id": "aicore1",
+      "name": "AiCore 1",
+      "type": "compute",
+      "description": "AI 核心 1",
+      "position": { "x": 700, "y": 220 },
+      "size": { "width": 500, "height": 600 },
+      "style": {
+        "fill": "#ECEFF1",
+        "stroke": "#37474F",
+        "strokeWidth": 4,
+        "shape": "rectangle"
+      },
+      "metadata": {
+        "coreId": 1,
+        "sourceFile": "src/main/scala/ascend/AiCore.scala"
+      },
+      "children": [
+        {
+          "id": "scalar1",
+          "name": "ScalarUnit",
+          "type": "control",
+          "description": "12-State FSM",
+          "position": { "x": 20, "y": 30 },
+          "size": { "width": 200, "height": 100 },
+          "style": {
+            "fill": "#B0BEC5",
+            "stroke": "#37474F",
+            "strokeWidth": 2,
+            "shape": "rectangle"
+          },
+          "metadata": {
+            "states": 12,
+            "sourceFile": "src/main/scala/ascend/ScalarUnit.scala"
+          }
+        },
+        {
+          "id": "dma1",
+          "name": "DMA Engine",
+          "type": "dma",
+          "description": "L2↔UB",
+          "position": { "x": 260, "y": 30 },
+          "size": { "width": 200, "height": 100 },
+          "style": {
+            "fill": "#FFB74D",
+            "stroke": "#37474F",
+            "strokeWidth": 2,
+            "shape": "rectangle"
+          },
+          "metadata": {
+            "sourceFile": "src/main/scala/ascend/AiCore.scala:69"
+          }
+        },
+        {
+          "id": "ub1",
+          "name": "UB₁",
+          "type": "memory",
+          "description": "私有 256×128b",
+          "position": { "x": 20, "y": 160 },
+          "size": { "width": 440, "height": 100 },
+          "style": {
+            "fill": "#E8EAF6",
+            "stroke": "#37474F",
+            "strokeWidth": 2,
+            "shape": "rectangle"
+          },
+          "metadata": {
+            "capacity": "256×128b",
+            "sourceFile": "src/main/scala/ascend/ToyAscendTop.scala:84"
+          }
+        },
+        {
+          "id": "cube1",
+          "name": "CubeUnit",
+          "type": "compute",
+          "description": "矩阵计算单元",
+          "position": { "x": 20, "y": 290 },
+          "size": { "width": 210, "height": 270 },
+          "style": {
+            "fill": "#E3F2FD",
+            "stroke": "#37474F",
+            "strokeWidth": 2,
+            "shape": "rectangle"
+          },
+          "metadata": {
+            "sourceFile": "src/main/scala/ascend/CubeUnit.scala"
+          },
+          "children": [
+            {
+              "id": "sa1",
+              "name": "SystolicArray",
+              "type": "compute",
+              "description": "4×4 PE",
+              "position": { "x": 15, "y": 50 },
+              "size": { "width": 180, "height": 200 },
+              "style": {
+                "fill": "#90CAF9",
+                "stroke": "#37474F",
+                "strokeWidth": 2,
+                "shape": "rectangle"
+              },
+              "metadata": {
+                "arraySize": "4×4",
+                "sourceFile": "src/main/scala/ascend/SystolicArray.scala"
+              }
+            }
+          ]
+        },
+        {
+          "id": "vec1",
+          "name": "VectorUnit",
+          "type": "compute",
+          "description": "VECADD/RELU",
+          "position": { "x": 260, "y": 290 },
+          "size": { "width": 200, "height": 120 },
+          "style": {
+            "fill": "#90CAF9",
+            "stroke": "#37474F",
+            "strokeWidth": 2,
+            "shape": "rectangle"
+          },
+          "metadata": {
+            "sourceFile": "src/main/scala/ascend/VectorUnit.scala"
+          }
+        }
+      ]
+    }
+  ],
+  "connections": [
+    {
+      "id": "conn_hbm_l2",
+      "source": "hbm",
+      "target": "l2",
+      "label": "外部预加载",
+      "style": {
+        "stroke": "#546E7A",
+        "strokeWidth": 3,
+        "animated": false
+      }
+    },
+    {
+      "id": "conn_l2_dma0",
+      "source": "l2",
+      "target": "aicore0.dma0",
+      "label": "Core 0\n[0..1023]",
+      "style": {
+        "stroke": "#FF6F00",
+        "strokeWidth": 3,
+        "animated": false
+      }
+    },
+    {
+      "id": "conn_l2_dma1",
+      "source": "l2",
+      "target": "aicore1.dma1",
+      "label": "Core 1\n[1024..2047]",
+      "style": {
+        "stroke": "#FF6F00",
+        "strokeWidth": 3,
+        "animated": false
+      }
+    },
+    {
+      "id": "conn_imem_scalar0",
+      "source": "imem",
+      "target": "aicore0.scalar0",
+      "label": "instr",
+      "style": {
+        "stroke": "#1976D2",
+        "strokeWidth": 2,
+        "strokeDasharray": "5,5",
+        "animated": false
+      }
+    },
+    {
+      "id": "conn_imem_scalar1",
+      "source": "imem",
+      "target": "aicore1.scalar1",
+      "label": "instr",
+      "style": {
+        "stroke": "#1976D2",
+        "strokeWidth": 2,
+        "strokeDasharray": "5,5",
+        "animated": false
+      }
+    },
+    {
+      "id": "conn_dma0_ub0",
+      "source": "aicore0.dma0",
+      "target": "aicore0.ub0",
+      "label": "DMA_LOAD/STORE",
+      "style": {
+        "stroke": "#FF6F00",
+        "strokeWidth": 2,
+        "animated": false
+      }
+    },
+    {
+      "id": "conn_scalar0_ub0",
+      "source": "aicore0.scalar0",
+      "target": "aicore0.ub0",
+      "label": "LOAD/STORE",
+      "style": {
+        "stroke": "#546E7A",
+        "strokeWidth": 2,
+        "animated": false
+      }
+    },
+    {
+      "id": "conn_scalar0_cube0",
+      "source": "aicore0.scalar0",
+      "target": "aicore0.cube0",
+      "label": "MATMUL",
+      "style": {
+        "stroke": "#546E7A",
+        "strokeWidth": 2,
+        "animated": false
+      }
+    },
+    {
+      "id": "conn_scalar0_vec0",
+      "source": "aicore0.scalar0",
+      "target": "aicore0.vec0",
+      "label": "VECADD/RELU",
+      "style": {
+        "stroke": "#546E7A",
+        "strokeWidth": 2,
+        "animated": false
+      }
+    }
+  ],
+  "dataFlows": [
+    {
+      "name": "MATMUL 数据流",
+      "path": ["hbm", "l2", "aicore0.dma0", "aicore0.ub0", "aicore0.cube0.sa0"],
+      "color": "#FF6F00",
+      "duration": 4000
+    }
+  ],
+  "perfCounters": {
+    "aicore0": {
+      "totalCycles": 1000,
+      "cubeComputeCycles": 600,
+      "bubbleCycles": 100,
+      "utilization": 0.6
+    },
+    "aicore1": {
+      "totalCycles": 1000,
+      "cubeComputeCycles": 550,
+      "bubbleCycles": 120,
+      "utilization": 0.55
+    }
+  }
+}

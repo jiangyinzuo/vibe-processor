@@ -1,0 +1,463 @@
+{
+  "name": "ToyGpuTop",
+  "type": "top",
+  "description": "英伟达 GPU 多SM架构 (4×SM)",
+  "viewport": {
+    "width": 1600,
+    "height": 900
+  },
+  "modules": [
+    {
+      "id": "imem",
+      "name": "InstrMem",
+      "type": "memory",
+      "description": "共享 256×32b",
+      "position": { "x": 100, "y": 50 },
+      "size": { "width": 180, "height": 100 },
+      "style": {
+        "fill": "#BBDEFB",
+        "stroke": "#37474F",
+        "strokeWidth": 2,
+        "shape": "rectangle"
+      },
+      "metadata": {
+        "capacity": "256×32b",
+        "sourceFile": "src/main/scala/gpu/ToyGpuTop.scala:36"
+      }
+    },
+    {
+      "id": "gmem",
+      "name": "GlobalMem",
+      "type": "memory",
+      "description": "片外 4096×128b\nLatency in Warp",
+      "position": { "x": 350, "y": 50 },
+      "size": { "width": 220, "height": 120 },
+      "style": {
+        "fill": "#CFD8DC",
+        "stroke": "#37474F",
+        "strokeWidth": 3,
+        "shape": "rectangle"
+      },
+      "metadata": {
+        "capacity": "4096×128b",
+        "sourceFile": "src/main/scala/gpu/ToyGpuTop.scala:40"
+      }
+    },
+    {
+      "id": "sm0",
+      "name": "SM 0",
+      "type": "compute",
+      "description": "Streaming Multiprocessor 0",
+      "position": { "x": 100, "y": 220 },
+      "size": { "width": 450, "height": 600 },
+      "style": {
+        "fill": "#ECEFF1",
+        "stroke": "#37474F",
+        "strokeWidth": 4,
+        "shape": "rectangle"
+      },
+      "metadata": {
+        "smId": 0,
+        "sourceFile": "src/main/scala/gpu/SM.scala"
+      },
+      "children": [
+        {
+          "id": "sched0",
+          "name": "WarpScheduler",
+          "type": "control",
+          "description": "Round-Robin",
+          "position": { "x": 20, "y": 30 },
+          "size": { "width": 400, "height": 80 },
+          "style": {
+            "fill": "#B0BEC5",
+            "stroke": "#37474F",
+            "strokeWidth": 2,
+            "shape": "rectangle"
+          },
+          "metadata": {
+            "sourceFile": "src/main/scala/gpu/WarpScheduler.scala"
+          }
+        },
+        {
+          "id": "warp0_0",
+          "name": "Warp 0",
+          "type": "compute",
+          "description": "4×CudaCore\nRegFile 16×32b",
+          "position": { "x": 20, "y": 140 },
+          "size": { "width": 190, "height": 160 },
+          "style": {
+            "fill": "#81C784",
+            "stroke": "#37474F",
+            "strokeWidth": 2,
+            "shape": "rectangle"
+          },
+          "metadata": {
+            "warpId": 0,
+            "sourceFile": "src/main/scala/gpu/Warp.scala"
+          },
+          "children": [
+            {
+              "id": "regfile0_0",
+              "name": "RegFile",
+              "type": "memory",
+              "description": "16×32b",
+              "position": { "x": 10, "y": 20 },
+              "size": { "width": 170, "height": 50 },
+              "style": {
+                "fill": "#A5D6A7",
+                "stroke": "#37474F",
+                "strokeWidth": 2,
+                "shape": "rectangle"
+              },
+              "metadata": {
+                "capacity": "16×32b per thread",
+                "sourceFile": "src/main/scala/gpu/Warp.scala"
+              }
+            },
+            {
+              "id": "cudacores0_0",
+              "name": "CudaCore[0..3]",
+              "type": "compute",
+              "description": "4×Core",
+              "position": { "x": 10, "y": 85 },
+              "size": { "width": 170, "height": 60 },
+              "style": {
+                "fill": "#66BB6A",
+                "stroke": "#37474F",
+                "strokeWidth": 2,
+                "shape": "rectangle"
+              },
+              "metadata": {
+                "count": 4,
+                "sourceFile": "src/main/scala/gpu/CudaCore.scala"
+              }
+            }
+          ]
+        },
+        {
+          "id": "warp0_1",
+          "name": "Warp 1",
+          "type": "compute",
+          "description": "4×CudaCore\nRegFile",
+          "position": { "x": 230, "y": 140 },
+          "size": { "width": 190, "height": 160 },
+          "style": {
+            "fill": "#81C784",
+            "stroke": "#37474F",
+            "strokeWidth": 2,
+            "shape": "rectangle"
+          },
+          "metadata": {
+            "warpId": 1,
+            "sourceFile": "src/main/scala/gpu/Warp.scala"
+          }
+        },
+        {
+          "id": "warp0_2",
+          "name": "Warp 2",
+          "type": "compute",
+          "description": "4×CudaCore\nRegFile",
+          "position": { "x": 20, "y": 320 },
+          "size": { "width": 190, "height": 160 },
+          "style": {
+            "fill": "#81C784",
+            "stroke": "#37474F",
+            "strokeWidth": 2,
+            "shape": "rectangle"
+          },
+          "metadata": {
+            "warpId": 2,
+            "sourceFile": "src/main/scala/gpu/Warp.scala"
+          }
+        },
+        {
+          "id": "warp0_3",
+          "name": "Warp 3",
+          "type": "compute",
+          "description": "4×CudaCore\nRegFile",
+          "position": { "x": 230, "y": 320 },
+          "size": { "width": 190, "height": 160 },
+          "style": {
+            "fill": "#81C784",
+            "stroke": "#37474F",
+            "strokeWidth": 2,
+            "shape": "rectangle"
+          },
+          "metadata": {
+            "warpId": 3,
+            "sourceFile": "src/main/scala/gpu/Warp.scala"
+          }
+        },
+        {
+          "id": "shmem0",
+          "name": "SharedMem",
+          "type": "memory",
+          "description": "256×128b",
+          "position": { "x": 20, "y": 500 },
+          "size": { "width": 400, "height": 80 },
+          "style": {
+            "fill": "#E8EAF6",
+            "stroke": "#37474F",
+            "strokeWidth": 2,
+            "shape": "rectangle"
+          },
+          "metadata": {
+            "capacity": "256×128b",
+            "sourceFile": "src/main/scala/gpu/SM.scala"
+          }
+        }
+      ]
+    },
+    {
+      "id": "sm1",
+      "name": "SM 1",
+      "type": "compute",
+      "description": "Streaming Multiprocessor 1",
+      "position": { "x": 600, "y": 220 },
+      "size": { "width": 450, "height": 600 },
+      "style": {
+        "fill": "#ECEFF1",
+        "stroke": "#37474F",
+        "strokeWidth": 4,
+        "shape": "rectangle"
+      },
+      "metadata": {
+        "smId": 1,
+        "sourceFile": "src/main/scala/gpu/SM.scala"
+      },
+      "children": [
+        {
+          "id": "sched1",
+          "name": "Scheduler",
+          "type": "control",
+          "position": { "x": 20, "y": 30 },
+          "size": { "width": 400, "height": 80 },
+          "style": {
+            "fill": "#B0BEC5",
+            "stroke": "#37474F",
+            "strokeWidth": 2,
+            "shape": "rectangle"
+          }
+        },
+        {
+          "id": "warps1",
+          "name": "Warp 0..3",
+          "type": "compute",
+          "position": { "x": 20, "y": 140 },
+          "size": { "width": 400, "height": 340 },
+          "style": {
+            "fill": "#81C784",
+            "stroke": "#37474F",
+            "strokeWidth": 2,
+            "shape": "rectangle"
+          }
+        },
+        {
+          "id": "shmem1",
+          "name": "SharedMem",
+          "type": "memory",
+          "position": { "x": 20, "y": 500 },
+          "size": { "width": 400, "height": 80 },
+          "style": {
+            "fill": "#E8EAF6",
+            "stroke": "#37474F",
+            "strokeWidth": 2,
+            "shape": "rectangle"
+          }
+        }
+      ]
+    },
+    {
+      "id": "sm2",
+      "name": "SM 2",
+      "type": "compute",
+      "description": "Streaming Multiprocessor 2",
+      "position": { "x": 1100, "y": 220 },
+      "size": { "width": 450, "height": 600 },
+      "style": {
+        "fill": "#ECEFF1",
+        "stroke": "#37474F",
+        "strokeWidth": 4,
+        "shape": "rectangle"
+      },
+      "metadata": {
+        "smId": 2,
+        "sourceFile": "src/main/scala/gpu/SM.scala"
+      },
+      "children": [
+        {
+          "id": "sched2",
+          "name": "Scheduler",
+          "type": "control",
+          "position": { "x": 20, "y": 30 },
+          "size": { "width": 400, "height": 80 },
+          "style": {
+            "fill": "#B0BEC5",
+            "stroke": "#37474F",
+            "strokeWidth": 2,
+            "shape": "rectangle"
+          }
+        },
+        {
+          "id": "warps2",
+          "name": "Warp 0..3",
+          "type": "compute",
+          "position": { "x": 20, "y": 140 },
+          "size": { "width": 400, "height": 340 },
+          "style": {
+            "fill": "#81C784",
+            "stroke": "#37474F",
+            "strokeWidth": 2,
+            "shape": "rectangle"
+          }
+        },
+        {
+          "id": "shmem2",
+          "name": "SharedMem",
+          "type": "memory",
+          "position": { "x": 20, "y": 500 },
+          "size": { "width": 400, "height": 80 },
+          "style": {
+            "fill": "#E8EAF6",
+            "stroke": "#37474F",
+            "strokeWidth": 2,
+            "shape": "rectangle"
+          }
+        }
+      ]
+    }
+  ],
+  "connections": [
+    {
+      "id": "conn_imem_sm0",
+      "source": "imem",
+      "target": "sm0.sched0",
+      "label": "instr",
+      "style": {
+        "stroke": "#1976D2",
+        "strokeWidth": 2,
+        "strokeDasharray": "5,5"
+      }
+    },
+    {
+      "id": "conn_imem_sm1",
+      "source": "imem",
+      "target": "sm1.sched1",
+      "label": "instr",
+      "style": {
+        "stroke": "#1976D2",
+        "strokeWidth": 2,
+        "strokeDasharray": "5,5"
+      }
+    },
+    {
+      "id": "conn_imem_sm2",
+      "source": "imem",
+      "target": "sm2.sched2",
+      "label": "instr",
+      "style": {
+        "stroke": "#1976D2",
+        "strokeWidth": 2,
+        "strokeDasharray": "5,5"
+      }
+    },
+    {
+      "id": "conn_gmem_sm0",
+      "source": "gmem",
+      "target": "sm0.warp0_0",
+      "label": "LD/ST",
+      "style": {
+        "stroke": "#D32F2F",
+        "strokeWidth": 3
+      },
+      "dataFlow": {
+        "animated": true,
+        "direction": "bidirectional"
+      }
+    },
+    {
+      "id": "conn_gmem_sm1",
+      "source": "gmem",
+      "target": "sm1.warps1",
+      "label": "LD/ST",
+      "style": {
+        "stroke": "#D32F2F",
+        "strokeWidth": 3
+      },
+      "dataFlow": {
+        "animated": true,
+        "direction": "bidirectional"
+      }
+    },
+    {
+      "id": "conn_gmem_sm2",
+      "source": "gmem",
+      "target": "sm2.warps2",
+      "label": "LD/ST",
+      "style": {
+        "stroke": "#D32F2F",
+        "strokeWidth": 3
+      },
+      "dataFlow": {
+        "animated": true,
+        "direction": "bidirectional"
+      }
+    },
+    {
+      "id": "conn_sched0_warp0",
+      "source": "sm0.sched0",
+      "target": "sm0.warp0_0",
+      "label": "grant",
+      "style": {
+        "stroke": "#546E7A",
+        "strokeWidth": 2
+      }
+    },
+    {
+      "id": "conn_sched0_warp1",
+      "source": "sm0.sched0",
+      "target": "sm0.warp0_1",
+      "label": "grant",
+      "style": {
+        "stroke": "#546E7A",
+        "strokeWidth": 2
+      }
+    },
+    {
+      "id": "conn_sched0_warp2",
+      "source": "sm0.sched0",
+      "target": "sm0.warp0_2",
+      "label": "grant",
+      "style": {
+        "stroke": "#546E7A",
+        "strokeWidth": 2
+      }
+    },
+    {
+      "id": "conn_sched0_warp3",
+      "source": "sm0.sched0",
+      "target": "sm0.warp0_3",
+      "label": "grant",
+      "style": {
+        "stroke": "#546E7A",
+        "strokeWidth": 2
+      }
+    }
+  ],
+  "dataFlows": [
+    {
+      "name": "Global Memory Access",
+      "path": ["gmem", "sm0.warp0_0.regfile0_0", "sm0.warp0_0.cudacores0_0"],
+      "color": "#D32F2F",
+      "duration": 3000
+    }
+  ],
+  "perfCounters": {
+    "sm0": {
+      "totalCycles": 1000,
+      "activeWarpCycles": 800,
+      "gmemReads": 150,
+      "gmemWrites": 50
+    }
+  }
+}

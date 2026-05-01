@@ -14,3 +14,37 @@ project/project/
 .bloop/
 generated/
 build/
+
+# Web 前端
+web/node_modules/
+web/dist/
+web/.vite/
+web/package-lock.json
+
+# 操作系统
+.DS_Store
+Thumbs.db
+
+# 临时文件
+*.log
+*.swp
+*.swo
+*~
+*.tmp
+*.tmp.*
+.tmp/
+
+# 编辑器
+*.sublime-*
+.vscode/
+.idea/
+
+# 性能测试输出
+benchmark/results/
+*.csv
+*.json.bak
+
+# 文档生成（保留交互式文档）
+docs/**/*.html
+!docs/interactive/index.html
+!docs/interactive/README.md

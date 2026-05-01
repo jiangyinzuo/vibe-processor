@@ -76,8 +76,15 @@ class Warp(
   }
 
   // FSM: sRun is the normal state, sMemWait stalls for memory latency
+  // 状态机：协作式调度模型
+  //   - sRun: 正常执行状态，可以被调度
+  //   - sMemWait: 等待内存访问完成，主动让出时间片（协作式）
+  //   - sHalted: 已停止，不再参与调度
   val sRun :: sMemWait :: sHalted :: Nil = Enum(3)
   val state = RegInit(sRun)
+
+  // busy 信号：告诉调度器"我在等待内存，请不要调度我"
+  // 这是协作式调度的关键：Warp 主动通知调度器自己的状态
   io.busy := state === sMemWait
 
   // Memory latency counter and data latch
@@ -102,12 +109,22 @@ class Warp(
             pc := pc + 1.U
           }
           is(GpuOpcode.LD) {
+            // === 协作式调度：访存时主动让出时间片 ===
+            // 1. 启动内存读取
             val addr = (regFile(0)(rs1).asUInt + imm12)(GpuParams.GlobalAddrW - 1, 0)
             io.gmemEn   := true.B
             io.gmemAddr := addr
+
+            // 2. 保存读取的数据和目标寄存器（用于延迟写回）
             memDataLat := io.gmemRdata
             memRdLat   := rd
+
+            // 3. 设置延迟计数器（模拟内存访问延迟）
             memCounter := (memLatency - 1).U
+
+            // 4. 进入 sMemWait 状态 → 主动让出时间片
+            //    这是协作式调度的核心：Warp 主动进入等待状态
+            //    调度器会选择其他活跃的 Warp 执行，实现延迟隐藏
             state      := sMemWait
           }
           is(GpuOpcode.ST) {
@@ -132,13 +149,22 @@ class Warp(
       }
     }
     is(sMemWait) {
+      // === 内存等待状态：Warp 让出时间片期间 ===
+      // 在这个状态下：
+      //   - io.busy = true，调度器不会选择这个 Warp
+      //   - 其他 Warp 可以执行，实现延迟隐藏
+      //   - 内部计数器递减，模拟内存延迟
       when(memCounter === 0.U) {
+        // 延迟结束，写回数据到寄存器
         for (i <- 0 until warpWidth) {
           regFile(i)(memRdLat) := memDataLat(i)
         }
         pc    := pc + 1.U
+        // 返回 sRun 状态，重新参与调度
+        // io.busy 变为 false，调度器可以再次选择这个 Warp
         state := sRun
       }.otherwise {
+        // 继续等待，递减计数器
         memCounter := memCounter - 1.U
       }
     }

@@ -12,8 +12,8 @@ class VectorUnitTest extends AnyFunSpec with ChiselSim {
 
     it("computes VECADD") {
       simulate(new VectorUnit) { dut =>
-        val a = Array(10, 20, -5, 100)
-        val b = Array(3, -7, 15, -50)
+        val a = Array.tabulate(N)(i => 10 + i * 5)
+        val b = Array.tabulate(N)(i => 3 - i * 2)
 
         for (i <- 0 until N) {
           dut.io.src1(i).poke(a(i).S(32.W))
@@ -33,7 +33,7 @@ class VectorUnitTest extends AnyFunSpec with ChiselSim {
 
     it("computes RELU with mixed values") {
       simulate(new VectorUnit) { dut =>
-        val a = Array(10, -20, 0, -1)
+        val a = Array.tabulate(N)(i => 10 - i * 5)
 
         for (i <- 0 until N) {
           dut.io.src1(i).poke(a(i).S(32.W))
@@ -54,7 +54,7 @@ class VectorUnitTest extends AnyFunSpec with ChiselSim {
 
     it("computes RELU with all negative values") {
       simulate(new VectorUnit) { dut =>
-        val a = Array(-1, -100, -50, -3)
+        val a = Array.tabulate(N)(i => -1 - i * 10)
 
         for (i <- 0 until N) {
           dut.io.src1(i).poke(a(i).S(32.W))
