@@ -32,6 +32,7 @@
 - Scala 2.13.18（由 `build.sbt` 固定）
 - Chisel 7.9.0（由 `build.sbt` 自动下载）
 - Verilator 5.0+（ChiselSim/svsim 测试需要）
+- 可选时序分析工具：Yosys、OpenLane 2 / OpenROAD / OpenSTA
 
 ### 安装 Chisel 环境
 
@@ -83,6 +84,101 @@ verilator --version
 sbt "testOnly ascend.PETest"
 ```
 
+### 安装时序分析工具
+
+用于后续判断流水线切分点的两层工具：
+
+- **Yosys**：快速综合 RTL，查看资源统计、结构问题和粗略组合路径。
+- **OpenLane 2 / OpenROAD / OpenSTA**：跑 ASIC 风格综合、布局布线和静态时序分析（STA）。
+
+Linux / WSL (Ubuntu/Debian)：
+
+```bash
+sudo apt-get update
+sudo apt-get install -y yosys graphviz curl git xz-utils
+
+# OpenLane 2 官方推荐 Nix 安装方式；不要用 apt 安装 Nix。
+curl --proto '=https' --tlsv1.2 -sSf -L https://install.determinate.systems/nix | sh -s -- install --no-confirm --extra-conf "
+extra-substituters = https://openlane.cachix.org
+extra-trusted-public-keys = openlane.cachix.org-1:qqdwh+QMNGmZAuyeQJTH9ErW57OWSvdtuwfBKdS254E=
+"
+
+# 当前 shell 立即启用 nix；新终端通常会自动加载。
+. /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
+
+sudo rm -rf /opt/openlane2
+sudo git clone --depth 1 https://github.com/efabless/openlane2 /opt/openlane2
+```
+
+验证安装：
+
+```bash
+yosys -V
+
+. /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
+cd /opt/openlane2
+nix-shell --run 'openlane --version && openroad -version && sta -version'
+```
+
+当前环境验证版本：
+
+```text
+Yosys 0.33
+OpenLane v2.3.10
+OpenSTA 2.6.0
+```
+
+### RTL 结构和时序分析
+
+先生成适合 Yosys 读取的 Verilog：
+
+```bash
+sbt "runMain top.Elaborate"
+```
+
+Yosys 粗筛 GPU RTL：
+
+```bash
+yosys -p '
+  read_verilog -sv generated/gpu/yosys/*.sv
+  hierarchy -top ToyGpuTop
+  proc; opt
+  check
+  stat
+'
+```
+
+查看某个模块的粗略最长拓扑路径：
+
+```bash
+yosys -p '
+  read_verilog -sv generated/gpu/yosys/*.sv
+  hierarchy -top SM
+  proc; opt; flatten; opt
+  ltp -noff
+'
+```
+
+`ltp -noff` 会自动排除触发器 cell，避免把寄存器自身的反馈路径当成组合路径。它不使用工艺库和线延迟，只能作为流水线切分的早期线索；真正的 Fmax 和 critical path 需要 OpenROAD/OpenSTA 在具体工艺库、SDC 时钟约束和后端流程下报告。
+
+进入 OpenLane 2 工具环境：
+
+```bash
+. /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
+cd /opt/openlane2
+nix-shell
+```
+
+进入环境后可以使用：
+
+```bash
+openlane --version
+openroad -version
+sta -version
+```
+
+下一步若要得到真实 STA 报告，需要为 `ToyGpuTop` 或单个子模块准备 OpenLane design config、SDC 时钟约束和目标 PDK，然后用 OpenROAD/OpenSTA 查看 `report_checks` 的 critical path。
+
 ### 运行测试
 
 ```bash
@@ -102,11 +198,17 @@ sbt "testOnly ascend.OverlapBenchmark"
 ### 生成 Verilog
 
 ```bash
-# 生成 NPU Verilog
-sbt "runMain top.Elaborate --target npu"
+# 同时生成 NPU 和 GPU Verilog
+sbt "runMain top.Elaborate"
+```
 
-# 生成 GPU Verilog
-sbt "runMain top.Elaborate --target gpu"
+生成目录：
+
+```text
+generated/ascend/
+generated/ascend/yosys/
+generated/gpu/
+generated/gpu/yosys/
 ```
 
 ## 📚 文档
@@ -130,6 +232,7 @@ sbt "runMain top.Elaborate --target gpu"
 - **[共享架构总结](docs/gpu/shared_architecture_summary.md)** - 重构设计和性能提升
 - **[Warp 调度](docs/gpu/warp_scheduling.md)** - 调度策略和性能优化
 - **[双调度器](docs/gpu/dual_scheduler_summary.md)** - 双发射架构
+- **[流水线时序分析](docs/gpu/pipeline_timing_analysis.md)** - Yosys 粗筛、最长拓扑路径和切分优先级
 
 ## 🏗️ 项目结构
 
