@@ -28,5 +28,5 @@ object AscendParams {
   val L0ADepth   = ArraySize  // L0A: 激活输入缓存，存储 N 行
   val L0BDepth   = ArraySize  // L0B: 权重输入缓存，存储 N 行
   val L0CDepth   = ArraySize  // L0C: 输出缓存，存储 N 行
-  val AicTileSlots = 4         // AIC-side L0 tile FIFO slots for pipelined LOAD/MATMUL
+  val CubeTileSlots = 4        // CubeCore-side L0 tile FIFO slots for pipelined LOAD/MATMUL
 }

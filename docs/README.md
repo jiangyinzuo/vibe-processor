@@ -22,6 +22,7 @@ docs/npu/
 ├── architecture.md              # NPU 架构详解
 ├── architecture_differences.md  # 玩具 vs 真实昇腾差异
 ├── dma_overlap.md               # DMA-Compute Overlap 优化
+├── pipeline_timing_analysis.md  # NPU 流水线时序分析
 ├── performance_measurement.md   # 实际性能测量报告
 └── implementation_summary.md    # 实现总结
 ```
@@ -30,6 +31,7 @@ docs/npu/
 - [NPU 架构](npu/architecture.md) - 收缩阵列、DMA、多核并行
 - [架构差异](npu/architecture_differences.md) - 与真实昇腾的差距分析
 - [DMA Overlap](npu/dma_overlap.md) - 非阻塞 DMA、双缓冲、性能优化
+- [NPU 流水线时序分析](npu/pipeline_timing_analysis.md) - Yosys LTP、OpenSTA 粗估和切分优先级
 - [性能测量](npu/performance_measurement.md) - 实际加速比 1.22×，重叠率 24.1%
 
 ### GPU 文档

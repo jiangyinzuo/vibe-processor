@@ -224,6 +224,7 @@ generated/gpu/yosys/
 - **[NPU 架构](docs/npu/architecture.md)** - 收缩阵列、DMA、多核并行
 - **[DMA-Compute Overlap](docs/npu/dma_overlap.md)** - 非阻塞 DMA、双缓冲、性能优化
 - **[性能测量](docs/npu/performance_measurement.md)** - 实际加速比 1.22×，重叠率 24.1%
+- **[NPU 流水线时序分析](docs/npu/pipeline_timing_analysis.md)** - Yosys LTP、OpenSTA 粗估和切分优先级
 
 ### GPU 文档
 
@@ -266,7 +267,7 @@ vibe-processor/
 ### NPU (昇腾风格)
 
 - ✅ **8×8 收缩阵列** - 矩阵乘法加速
-- ✅ **AIC/AIV 解耦** - Cube 与 Vector 走独立执行核心
+- ✅ **CubeCore/VectorCore 解耦** - Cube 与 Vector 走独立执行核心
 - ✅ **MTE 多通路** - MTE1/MTE2/MTE3 分别覆盖 UB→L0、L2↔UB、L0C→UB
 - ✅ **多核并行** - 2 个 AiCore，独立执行
 - ✅ **真实 Local Memory 层次** - UB、L1 staging、L0A/L0B/L0C 分层建模
@@ -288,8 +289,8 @@ vibe-processor/
 **实现：**
 - 非阻塞 DMA 指令（DMA_LOAD/DMA_STORE/DMA_WAIT）
 - DMA 请求队列（深度 4）
-- UB 双端口分离（本地 MTE/AIV + MTE2）
-- AIC 侧 L0A/L0B tile FIFO，支持 LOAD/MATMUL 重叠
+- UB 双端口分离（本地 MTE/VectorCore + MTE2）
+- CubeCore 侧 L0A/L0B tile FIFO，支持 LOAD/MATMUL 重叠
 - MTE1/MTE2/MTE3 多通路传输
 
 **效果：**

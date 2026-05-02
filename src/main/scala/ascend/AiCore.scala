@@ -3,7 +3,7 @@ package ascend
 import chisel3._
 import chisel3.util._
 
-/** AI Core: scalar dispatcher + decoupled AIC/AIV compute cores + MTEs.
+/** AI Core: scalar dispatcher + decoupled CubeCore/VectorCore compute paths + MTEs.
   *
   * @param coreId Used for L2 address offset in data-parallel mode.
   */
@@ -40,19 +40,19 @@ class AiCore(
     val perf     = Output(new PerfCounters)
   })
 
-  val scalar = Module(new ScalarUnit(n, dw, aw))
-  val aic    = Module(new AicCore(n, dw, aw))
-  val aiv    = Module(new AivCore(n, aw))
-  val mte1   = Module(new Mte1(n, dw, aw))
-  val mte2   = Module(new Mte2(n, aw))
-  val mte3   = Module(new Mte3(n, aw))
+  val scalar     = Module(new ScalarUnit(n, dw, aw))
+  val cubeCore   = Module(new CubeCore(n, dw, aw))
+  val vectorCore = Module(new VectorCore(n, aw))
+  val mte1       = Module(new Mte1(n, dw, aw))
+  val mte2       = Module(new Mte2(n, aw))
+  val mte3       = Module(new Mte3(n, aw))
 
   scalar.io.start := io.start
   io.halted := scalar.io.halted
   io.imemAddr := scalar.io.imemAddr
   scalar.io.imemData := io.imemData
 
-  // === Scalar -> AIC/AIV/MTE command dispatch ===
+  // === Scalar -> CubeCore/VectorCore/MTE command dispatch ===
   mte1.io.start := scalar.io.mte1Start
   mte1.io.dstSel := scalar.io.mte1DstSel
   mte1.io.ubBase := scalar.io.mte1UbAddr
@@ -63,18 +63,18 @@ class AiCore(
   mte3.io.ubBase := scalar.io.mte3UbAddr
   scalar.io.mte3Done := mte3.io.done
 
-  aic.io.start := scalar.io.aicStart
-  scalar.io.aicDone := aic.io.done
+  cubeCore.io.start := scalar.io.cubeStart
+  scalar.io.cubeDone := cubeCore.io.done
 
-  aiv.io.start := scalar.io.aivStart
-  aiv.io.op := scalar.io.aivOp
-  aiv.io.src1Addr := scalar.io.aivSrc1Addr
-  aiv.io.src2Addr := scalar.io.aivSrc2Addr
-  scalar.io.aivDone := aiv.io.done
+  vectorCore.io.start := scalar.io.vectorStart
+  vectorCore.io.op := scalar.io.vectorOp
+  vectorCore.io.src1Addr := scalar.io.vectorSrc1Addr
+  vectorCore.io.src2Addr := scalar.io.vectorSrc2Addr
+  scalar.io.vectorDone := vectorCore.io.done
 
-  aic.io.mte1Write := mte1.io.aicWrite
-  aic.io.l0cReadRow := mte3.io.l0cReadRow
-  mte3.io.l0cReadData := aic.io.l0cReadData
+  cubeCore.io.mte1Write := mte1.io.cubeWrite
+  cubeCore.io.l0cReadRow := mte3.io.l0cReadRow
+  mte3.io.l0cReadData := cubeCore.io.l0cReadData
 
   // === DMA queue feeding MTE2 ===
   val dmaQueueDepth = 4
@@ -115,21 +115,21 @@ class AiCore(
     dmaQueueHead := (dmaQueueHead + 1.U) % dmaQueueDepth.U
   }
 
-  // === UB port A arbitration: MTE1/MTE3/AIV share the local-memory port ===
+  // === UB port A arbitration: MTE1/MTE3/VectorCore share the local-memory port ===
   val portAUseMte1 = mte1.io.ubEn
   val portAUseMte3 = !portAUseMte1 && mte3.io.ubEn
-  val portAUseAiv  = !portAUseMte1 && !portAUseMte3 && aiv.io.ubEn
+  val portAUseVector = !portAUseMte1 && !portAUseMte3 && vectorCore.io.ubEn
 
-  io.ubEn := portAUseMte1 || portAUseMte3 || portAUseAiv
-  io.ubWe := Mux(portAUseMte3, mte3.io.ubWe, Mux(portAUseAiv, aiv.io.ubWe, false.B))
+  io.ubEn := portAUseMte1 || portAUseMte3 || portAUseVector
+  io.ubWe := Mux(portAUseMte3, mte3.io.ubWe, Mux(portAUseVector, vectorCore.io.ubWe, false.B))
   io.ubAddr := Mux(portAUseMte1, mte1.io.ubAddr,
     Mux(portAUseMte3, mte3.io.ubAddr,
-      Mux(portAUseAiv, aiv.io.ubAddr, 0.U)))
+      Mux(portAUseVector, vectorCore.io.ubAddr, 0.U)))
   io.ubWdata := Mux(portAUseMte3, mte3.io.ubWdata,
-    Mux(portAUseAiv, aiv.io.ubWdata, VecInit.fill(n)(0.S(aw.W))))
+    Mux(portAUseVector, vectorCore.io.ubWdata, VecInit.fill(n)(0.S(aw.W))))
 
   mte1.io.ubRdata := io.ubRdata
-  aiv.io.ubRdata := io.ubRdata
+  vectorCore.io.ubRdata := io.ubRdata
 
   // === UB port B and L2 are owned by MTE2 ===
   io.ubEnB := mte2.io.ubEn
@@ -171,15 +171,15 @@ class AiCore(
     }
   }
 
-  val aicActive = RegInit(false.B)
-  when(scalar.io.aicStart) { aicActive := true.B }
-  when(aic.io.done)        { aicActive := false.B }
-  when(aicActive) { perf.cubeTotalCycles := perf.cubeTotalCycles + 1.U }
-  when(aic.io.dbgFeeding) { perf.cubeComputeCycles := perf.cubeComputeCycles + 1.U }
+  val cubeActive = RegInit(false.B)
+  when(scalar.io.cubeStart) { cubeActive := true.B }
+  when(cubeCore.io.done)    { cubeActive := false.B }
+  when(cubeActive) { perf.cubeTotalCycles := perf.cubeTotalCycles + 1.U }
+  when(cubeCore.io.dbgFeeding) { perf.cubeComputeCycles := perf.cubeComputeCycles + 1.U }
 
   val scalarWaiting = running && (
-    (scalar.io.dbgState === 8.U && !scalar.io.aicStart) ||
-      (scalar.io.dbgState === 9.U && !scalar.io.aivStart) ||
+    (scalar.io.dbgState === 8.U && !scalar.io.cubeStart) ||
+      (scalar.io.dbgState === 9.U && !scalar.io.vectorStart) ||
       (scalar.io.dbgState === 10.U && dmaQueueEmpty)
   )
   when(scalarWaiting) { perf.bubbleCycles := perf.bubbleCycles + 1.U }
@@ -195,11 +195,11 @@ class AiCore(
     perf.ubWrites := perf.ubWrites + 1.U
   }
 
-  when(scalar.io.aivStart && scalar.io.aivOp === 0.U) { perf.vecaddCount := perf.vecaddCount + 1.U }
-  when(scalar.io.aivStart && scalar.io.aivOp === 1.U) { perf.reluCount := perf.reluCount + 1.U }
+  when(scalar.io.vectorStart && scalar.io.vectorOp === 0.U) { perf.vecaddCount := perf.vecaddCount + 1.U }
+  when(scalar.io.vectorStart && scalar.io.vectorOp === 1.U) { perf.reluCount := perf.reluCount + 1.U }
 
   when(mte2.io.busy) { perf.dmaTotalCycles := perf.dmaTotalCycles + 1.U }
-  when(aicActive && (mte1.io.busy || mte2.io.busy)) {
+  when(cubeActive && (mte1.io.busy || mte2.io.busy)) {
     perf.overlapCycles := perf.overlapCycles + 1.U
   }
 }

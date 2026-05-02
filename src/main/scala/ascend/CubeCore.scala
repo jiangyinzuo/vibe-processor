@@ -3,24 +3,24 @@ package ascend
 import chisel3._
 import chisel3.util._
 
-object AicLocalTarget {
+object CubeLocalTarget {
   val ACT    = 0.U(1.W)
   val WEIGHT = 1.U(1.W)
 }
 
-/** AI Cube core.
+/** Cube Core.
   *
-  * This is the explicit AIC side of the toy Ascend core. It owns the
+  * This is the explicit Cube side of the toy Ascend core. It owns the
   * Cube-facing local memories: L1 staging writes land in L0A/L0B, Cube writes
   * results into L0C, and MTE3 reads L0C back out.
   */
-class AicCore(
+class CubeCore(
     n:  Int = AscendParams.ArraySize,
     dw: Int = AscendParams.DataWidth,
     aw: Int = AscendParams.AccWidth,
-    tileSlots: Int = AscendParams.AicTileSlots
+    tileSlots: Int = AscendParams.CubeTileSlots
 ) extends Module {
-  require(tileSlots >= 2, "AIC needs at least two tile slots for LOAD/MATMUL decoupling")
+  require(tileSlots >= 2, "CubeCore needs at least two tile slots for LOAD/MATMUL decoupling")
 
   val io = IO(new Bundle {
     val start       = Input(Bool())
@@ -53,13 +53,13 @@ class AicCore(
   val l0bReady = RegInit(VecInit.fill(tileSlots)(false.B))
 
   val writeLastRow = io.mte1Write.valid && io.mte1Write.bits.row === (n - 1).U
-  val writeActDone = writeLastRow && io.mte1Write.bits.target === AicLocalTarget.ACT
-  val writeWeightDone = writeLastRow && io.mte1Write.bits.target === AicLocalTarget.WEIGHT
+  val writeActDone = writeLastRow && io.mte1Write.bits.target === CubeLocalTarget.ACT
+  val writeWeightDone = writeLastRow && io.mte1Write.bits.target === CubeLocalTarget.WEIGHT
   val slotReadyAfterWrite =
     (l0aReady(fillSlot) || writeActDone) && (l0bReady(fillSlot) || writeWeightDone)
 
   when(io.mte1Write.valid) {
-    when(io.mte1Write.bits.target === AicLocalTarget.ACT) {
+    when(io.mte1Write.bits.target === CubeLocalTarget.ACT) {
       l0a(fillSlot)(io.mte1Write.bits.row) := io.mte1Write.bits.data
       when(writeLastRow) { l0aReady(fillSlot) := true.B }
     }.otherwise {

@@ -20,7 +20,7 @@ class Mte1(
     val ubAddr = Output(UInt(AscendParams.UBAddrW.W))
     val ubRdata = Input(Vec(n, SInt(aw.W)))
 
-    val aicWrite = Valid(new Bundle {
+    val cubeWrite = Valid(new Bundle {
       val target = UInt(1.W)
       val row    = UInt(log2Ceil(n).W)
       val data   = Vec(n, SInt(dw.W))
@@ -38,10 +38,10 @@ class Mte1(
   io.done := state === sDone
   io.ubEn := false.B
   io.ubAddr := 0.U
-  io.aicWrite.valid := false.B
-  io.aicWrite.bits.target := AicLocalTarget.ACT
-  io.aicWrite.bits.row := rowCnt(log2Ceil(n) - 1, 0)
-  io.aicWrite.bits.data := l1Row
+  io.cubeWrite.valid := false.B
+  io.cubeWrite.bits.target := CubeLocalTarget.ACT
+  io.cubeWrite.bits.row := rowCnt(log2Ceil(n) - 1, 0)
+  io.cubeWrite.bits.data := l1Row
 
   switch(state) {
     is(sIdle) {
@@ -66,10 +66,10 @@ class Mte1(
       state := sWrite
     }
     is(sWrite) {
-      io.aicWrite.valid := true.B
-      io.aicWrite.bits.target := Mux(dstSelReg === BufSel.L0_B, AicLocalTarget.ACT, AicLocalTarget.WEIGHT)
-      io.aicWrite.bits.row := rowCnt(log2Ceil(n) - 1, 0)
-      io.aicWrite.bits.data := l1Row
+      io.cubeWrite.valid := true.B
+      io.cubeWrite.bits.target := Mux(dstSelReg === BufSel.L0_B, CubeLocalTarget.ACT, CubeLocalTarget.WEIGHT)
+      io.cubeWrite.bits.row := rowCnt(log2Ceil(n) - 1, 0)
+      io.cubeWrite.bits.data := l1Row
       rowCnt := rowCnt + 1.U
       state := Mux(rowCnt === (n - 1).U, sDone, sRead)
     }

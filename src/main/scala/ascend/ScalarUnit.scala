@@ -28,7 +28,7 @@ object BufSel {
 /** Scalar Unit: instruction fetch, decode, and command dispatch.
   *
   * The scalar pipeline no longer owns Cube/Vector local data. It issues
-  * commands to the decoupled AIC, AIV, and MTE engines and waits on their
+  * commands to the decoupled CubeCore, VectorCore, and MTE engines and waits on their
   * completion when the ISA requires blocking behavior.
   */
 class ScalarUnit(
@@ -53,14 +53,14 @@ class ScalarUnit(
     val mte3Done  = Input(Bool())
     val mte3UbAddr = Output(UInt(AscendParams.UBAddrW.W))
 
-    val aicStart = Output(Bool())
-    val aicDone  = Input(Bool())
+    val cubeStart = Output(Bool())
+    val cubeDone  = Input(Bool())
 
-    val aivStart = Output(Bool())
-    val aivDone  = Input(Bool())
-    val aivOp    = Output(UInt(2.W))
-    val aivSrc1Addr = Output(UInt(AscendParams.UBAddrW.W))
-    val aivSrc2Addr = Output(UInt(AscendParams.UBAddrW.W))
+    val vectorStart = Output(Bool())
+    val vectorDone  = Input(Bool())
+    val vectorOp    = Output(UInt(2.W))
+    val vectorSrc1Addr = Output(UInt(AscendParams.UBAddrW.W))
+    val vectorSrc2Addr = Output(UInt(AscendParams.UBAddrW.W))
 
     val dmaQueueEnq    = Output(Bool())
     val dmaQueueFull   = Input(Bool())
@@ -108,12 +108,12 @@ class ScalarUnit(
   io.mte3Start := false.B
   io.mte3UbAddr := memAddrLat
 
-  io.aicStart := false.B
+  io.cubeStart := false.B
 
-  io.aivStart := false.B
-  io.aivOp := Mux(opLat === Opcode.RELU, 1.U, 0.U)
-  io.aivSrc1Addr := vecSrc1Lat
-  io.aivSrc2Addr := vecSrc2Lat
+  io.vectorStart := false.B
+  io.vectorOp := Mux(opLat === Opcode.RELU, 1.U, 0.U)
+  io.vectorSrc1Addr := vecSrc1Lat
+  io.vectorSrc2Addr := vecSrc2Lat
 
   io.dmaQueueEnq := false.B
   io.dmaEnqIsStore := false.B
@@ -207,19 +207,19 @@ class ScalarUnit(
     }
 
     is(sMatmul) {
-      io.aicStart := true.B
-      when(io.aicDone) {
+      io.cubeStart := true.B
+      when(io.cubeDone) {
         pc := pc + 1.U
         state := sFetch
       }
     }
 
     is(sVec) {
-      io.aivStart := true.B
-      io.aivOp := Mux(opLat === Opcode.RELU, 1.U, 0.U)
-      io.aivSrc1Addr := vecSrc1Lat
-      io.aivSrc2Addr := vecSrc2Lat
-      when(io.aivDone) {
+      io.vectorStart := true.B
+      io.vectorOp := Mux(opLat === Opcode.RELU, 1.U, 0.U)
+      io.vectorSrc1Addr := vecSrc1Lat
+      io.vectorSrc2Addr := vecSrc2Lat
+      when(io.vectorDone) {
         pc := pc + 1.U
         state := sFetch
       }

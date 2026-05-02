@@ -2,7 +2,7 @@
 
 ## 概述
 
-本文档描述 NPU 中实现的 MTE-Compute Overlap 优化。当前 AiCore 已拆成 Scalar dispatcher、AIC、AIV、MTE1、MTE2、MTE3；数据搬运和计算可以在不同通路上重叠执行。
+本文档描述 NPU 中实现的 MTE-Compute Overlap 优化。当前 AiCore 已拆成 Scalar dispatcher、CubeCore、VectorCore、MTE1、MTE2、MTE3；数据搬运和计算可以在不同通路上重叠执行。
 
 ## 架构改进
 
@@ -47,7 +47,7 @@ val dmaQueue = RegInit(VecInit.fill(dmaQueueDepth)(0.U.asTypeOf(new Bundle {
 **新设计：**
 ```scala
 // AiCore.scala
-// Port A: MTE1 / MTE3 / AIV 共享本地存储通路
+// Port A: MTE1 / MTE3 / VectorCore 共享本地存储通路
 ub.io.portA.en    := core.io.ubEn
 ub.io.portA.we    := core.io.ubWe
 ub.io.portA.addr  := core.io.ubAddr
@@ -59,15 +59,15 @@ ub.io.portB.addr  := core.io.ubAddrB
 ```
 
 **优势：**
-- 本地 MTE/AIV 和 MTE2 可以同时访问 UB
-- L2↔UB 传输不阻塞 AIC 侧本地 LOAD/MATMUL
+- 本地 MTE/VectorCore 和 MTE2 可以同时访问 UB
+- L2↔UB 传输不阻塞 CubeCore 侧本地 LOAD/MATMUL
 - 为 overlap 提供硬件基础
 
-### 4. AIC L0 tile FIFO
+### 4. CubeCore L0 tile FIFO
 
 **设计：**
 ```scala
-// AicCore.scala
+// CubeCore.scala
 val l0a = RegInit(VecInit.fill(tileSlots, n, n)(0.S(dw.W)))
 val l0b = RegInit(VecInit.fill(tileSlots, n, n)(0.S(dw.W)))
 val l0c = RegInit(VecInit.fill(n, n)(0.S(aw.W)))
@@ -79,9 +79,9 @@ val l0bReady    = RegInit(VecInit.fill(tileSlots)(false.B))
 ```
 
 **工作原理：**
-- MTE1 把 UB 行读入 L1 staging，再写入 AIC 的 L0A/L0B
+- MTE1 把 UB 行读入 L1 staging，再写入 CubeCore 的 L0A/L0B
 - L0A/L0B 每侧有 4 个 tile slot，完整 ACT+WEIGHT ready 后进入可计算队列
-- AIC 从最老的 ready slot 启动 Cube，计算结果进入 L0C
+- CubeCore 从最老的 ready slot 启动 Cube，计算结果进入 L0C
 - MTE3 从 L0C 读回 UB，供后续 MTE2 写回 L2
 
 ## 指令集更新
@@ -165,10 +165,10 @@ DMA_WAIT
 ### 模式 3：本地 LOAD/MATMUL 重叠
 
 ```scala
-// 当前实现：AIC L0A/L0B tile FIFO 支持本地预取
+// 当前实现：CubeCore L0A/L0B tile FIFO 支持本地预取
 LOAD(bufSel=1, mem=nextAct)  // MTE1 后台写入下一个 slot
 LOAD(bufSel=0, mem=nextWei)
-MATMUL                       // AIC 消费已有 ready slot
+MATMUL                       // CubeCore 消费已有 ready slot
 ```
 
 ## 性能计数器
@@ -178,7 +178,7 @@ MATMUL                       // AIC 消费已有 ready slot
 ```scala
 class PerfCounters extends Bundle {
   // ... 现有字段 ...
-  val overlapCycles = UInt(32.W)  // AIC 和 MTE1/MTE2 重叠的周期数
+  val overlapCycles = UInt(32.W)  // CubeCore 和 MTE1/MTE2 重叠的周期数
 }
 ```
 
@@ -186,12 +186,12 @@ class PerfCounters extends Bundle {
 
 ```scala
 // AiCore.scala
-val aicActive = RegInit(false.B)
-when(scalar.io.aicStart) { aicActive := true.B }
-when(aic.io.done)        { aicActive := false.B }
+val cubeActive = RegInit(false.B)
+when(scalar.io.cubeStart) { cubeActive := true.B }
+when(cubeCore.io.done)        { cubeActive := false.B }
 
 when(mte2.io.busy) { perf.dmaTotalCycles := perf.dmaTotalCycles + 1.U }
-when(aicActive && (mte1.io.busy || mte2.io.busy)) {
+when(cubeActive && (mte1.io.busy || mte2.io.busy)) {
   perf.overlapCycles := perf.overlapCycles + 1.U
 }
 ```
@@ -219,7 +219,7 @@ DMA 周期:             72
 ```
 
 **分析：**
-- 基础集成测试已经能观察到 AIC 与 MTE 的局部重叠
+- 基础集成测试已经能观察到 CubeCore 与 MTE 的局部重叠
 - 更深的 tile 流水线由 Pipeline3Test 和 TripleBufferTest 覆盖
 
 ### 理论性能提升
@@ -245,7 +245,7 @@ DMA 周期:             72
 ### 当前限制
 
 1. **UB 地址冲突：**
-   - MTE1/MTE3/AIV 与 MTE2 最好访问不同的 UB 地址区间
+   - MTE1/MTE3/VectorCore 与 MTE2 最好访问不同的 UB 地址区间
    - 需要程序员手动管理地址分配
 
 2. **MTE2 执行宽度：**

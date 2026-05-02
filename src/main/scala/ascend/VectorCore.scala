@@ -3,12 +3,12 @@ package ascend
 import chisel3._
 import chisel3.util._
 
-/** AI Vector core.
+/** Vector Core.
   *
-  * Vector operations are now explicitly separated from the Cube/AIC path and
+  * Vector operations are now explicitly separated from the CubeCore path and
   * operate through UB, matching the Ascend programming model more closely.
   */
-class AivCore(
+class VectorCore(
     n:  Int = AscendParams.ArraySize,
     aw: Int = AscendParams.AccWidth
 ) extends Module {

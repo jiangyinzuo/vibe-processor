@@ -2,7 +2,7 @@
 
 ## 概述
 
-玩具版昇腾 NPU：2×AiCore，显式 AIC/AIV 解耦 + MTE 多通路 + 分层 Local Memory。
+玩具版昇腾 NPU：2×AiCore，显式 CubeCore/VectorCore 解耦 + MTE 多通路 + 分层 Local Memory。
 
 使用 Chisel 7 (Scala) 编写，Verilator (via svsim) 仿真，ScalaTest 验证。
 
@@ -17,7 +17,8 @@
 - 2 个 AiCore 并行执行相同程序，处理不同数据分片（数据并行）
 - 共享 L2 Buffer 和 InstrMem，每个核有私有 UB
 - 每个核通过 `coreId` 自动偏移 L2 地址，访问各自的数据切片
-- 每个 AiCore 内部由 Scalar dispatcher、AIC、AIV、MTE1、MTE2、MTE3 组成
+- 每个 AiCore 内部由 Scalar dispatcher、CubeCore、VectorCore、MTE1、MTE2、MTE3 组成
+- 命名上，`CubeCore` 对应真实昇腾分离模式中的 AIC，`VectorCore` 对应 AIV；本项目保留 `AiCore` 作为 toy AI Core group / wrapper。
 
 ---
 
@@ -31,15 +32,15 @@
 | L2 Buffer | Mem | 2048 | 组合读 | 多核共享 | L2 Buffer |
 | UB (per-core) | SyncReadMem (双端口) | 256 | 1 cycle | 单核私有 | Unified Buffer |
 | L1 staging | Reg row | 8 elements | 0 | MTE1 私有 | L1 Buffer 简化切片 |
-| L0A/L0B tile FIFO | Reg | 8×8×4 each | 0 | AIC 私有 | L0A/L0B |
-| L0C | Reg | 8×8 | 0 | AIC 私有 | L0C |
+| L0A/L0B tile FIFO | Reg | 8×8×4 each | 0 | CubeCore 私有 | L0A/L0B |
+| L0C | Reg | 8×8 | 0 | CubeCore 私有 | L0C |
 
-**数据流**：`HBM → (预加载) → L2 → MTE2 → UB → MTE1 → L1 staging → L0A/L0B → AIC/Cube → L0C → MTE3 → UB → MTE2 → L2`
+**数据流**：`HBM → (预加载) → L2 → MTE2 → UB → MTE1 → L1 staging → L0A/L0B → CubeCore/Cube → L0C → MTE3 → UB → MTE2 → L2`
 
 **关键特性：**
-- **AIC/AIV 解耦**：AIC 独占 Cube 和 L0A/L0B/L0C，AIV 独立执行 VECADD/RELU
+- **CubeCore/VectorCore 解耦**：CubeCore 独占 Cube 和 L0A/L0B/L0C，VectorCore 独立执行 VECADD/RELU
 - **MTE 多通路**：MTE1 负责 UB→L1→L0A/L0B，MTE2 负责 L2↔UB，MTE3 负责 L0C→UB
-- **UB 双端口**：Port A 由 MTE1/MTE3/AIV 仲裁，Port B 由 MTE2 独占
+- **UB 双端口**：Port A 由 MTE1/MTE3/VectorCore 仲裁，Port B 由 MTE2 独占
 - **L0 tile FIFO**：L0A/L0B 各有 4 个 tile slot，支持本地 LOAD 与 MATMUL 重叠
 - 详见 [DMA Overlap 优化文档](dma_overlap.md)
 
@@ -50,9 +51,9 @@
 | HBM/DDR (片外) | HBM (LatencyMem) | 片外高延迟存储 |
 | L2 Buffer (多核共享) | L2 Buffer (Mem) | 多核共享片上存储 |
 | L1 Buffer (单核私有) | MTE1 row staging + UB | L1 被简化为 MTE1 的行级 staging |
-| L0A (Cube 激活) | AIC L0A tile FIFO | AIC 私有，按 tile slot 管理 |
-| L0B (Cube 权重) | AIC L0B tile FIFO | AIC 私有，按 tile slot 管理 |
-| L0C (Cube 结果) | AIC L0C | AIC 私有，MTE3 读回 UB |
+| L0A (Cube 激活) | CubeCore L0A tile FIFO | CubeCore 私有，按 tile slot 管理 |
+| L0B (Cube 权重) | CubeCore L0B tile FIFO | CubeCore 私有，按 tile slot 管理 |
+| L0C (Cube 结果) | CubeCore L0C | CubeCore 私有，MTE3 读回 UB |
 
 ---
 
@@ -80,15 +81,15 @@ Weight-Stationary 8×8 收缩阵列，计算 C = A × W (INT8 → INT32)。
 | 0x1 | HALT | 停机 | 阻塞 |
 | 0x2 | LOAD | UB → MTE1 → L1 → L0A/L0B | **非阻塞启动** |
 | 0x3 | STORE | L0C → MTE3 → UB (N 行) | 阻塞 |
-| 0x4 | MATMUL | AIC: C = A × W (8×8, INT8→INT32) | 阻塞等待 AIC |
-| 0x5 | VECADD | AIV: 向量加法 (8路×32bit) | 阻塞等待 AIV |
-| 0x6 | RELU | AIV: max(0, x) | 阻塞等待 AIV |
+| 0x4 | MATMUL | CubeCore: C = A × W (8×8, INT8→INT32) | 阻塞等待 CubeCore |
+| 0x5 | VECADD | VectorCore: 向量加法 (8路×32bit) | 阻塞等待 VectorCore |
+| 0x6 | RELU | VectorCore: max(0, x) | 阻塞等待 VectorCore |
 | 0x8 | DMA_LOAD | MTE2: L2 → UB (N 行, 含 coreId 偏移) | **非阻塞** |
 | 0x9 | DMA_STORE | MTE2: UB → L2 (N 行, 含 coreId 偏移) | **非阻塞** |
 | 0xA | DMA_WAIT | 等待所有 DMA 完成 | 阻塞 |
 
 **关键特性：**
-- LOAD 在 MTE1 空闲时启动后继续取指，AIC 内部等待完整 tile ready 后再计算
+- LOAD 在 MTE1 空闲时启动后继续取指，CubeCore 内部等待完整 tile ready 后再计算
 - DMA_LOAD/DMA_STORE 为非阻塞指令，支持 DMA-Compute Overlap
 - DMA_WAIT 显式同步所有飞行中的 DMA 请求
 - 详见 [DMA Overlap 优化文档](dma_overlap.md)
@@ -105,7 +106,7 @@ Weight-Stationary 8×8 收缩阵列，计算 C = A × W (INT8 → INT32)。
 | bubbleCycles | Scalar 等待 Cube/Vector/DMA 的周期 |
 | ubReads / ubWrites | UB 访存次数 |
 | dmaLoadCount / dmaStoreCount / dmaTotalCycles | MTE2 DMA 统计 |
-| overlapCycles | AIC 计算与 MTE1/MTE2 传输重叠周期 |
+| overlapCycles | CubeCore 计算与 MTE1/MTE2 传输重叠周期 |
 
 **派生指标**：
 - Cube 利用率 = cubeCompute / cubeTotal
@@ -180,8 +181,8 @@ src/main/scala/ascend/
 ├── SystolicArray.scala     # 8×8 收缩阵列
 ├── CubeUnit.scala          # 矩阵计算单元
 ├── VectorUnit.scala        # 向量计算单元
-├── AicCore.scala           # AIC：Cube + L0A/L0B/L0C
-├── AivCore.scala           # AIV：Vector 执行核心
+├── CubeCore.scala           # CubeCore：Cube + L0A/L0B/L0C
+├── VectorCore.scala           # VectorCore：Vector 执行核心
 ├── MteEngines.scala        # MTE1/MTE2/MTE3
 ├── ScalarUnit.scala        # 指令取指/译码/命令调度
 ├── DmaEngine.scala         # 旧 DMA 单元（保留源码，当前 AiCore 使用 MTE2）
