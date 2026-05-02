@@ -52,6 +52,7 @@ class SM_Shared(
 
   // === 共享资源 ===
   val cudaCores = Array.fill(numCores)(Module(new CudaCore(dw)))
+  val sfus = Array.fill(warpWidth)(Module(new SFU(dw)))  // 每个 lane 一个 SFU
   val regFile = Module(new SharedRegisterFile(numWarps, warpWidth, numRegs = 16, dw, numCores))
   val sharedMem = SyncReadMem(GpuParams.SharedDepth, Vec(warpWidth, SInt(dw.W)))
 
@@ -133,16 +134,37 @@ class SM_Shared(
   regFile.io.wrAddr := dispatcher.io.regWrAddr
   regFile.io.wrData := dispatcher.io.regWrData
 
-  // === 连接 CUDA Core ===
+  // === 连接 CUDA Core 和 SFU ===
+  // 当指令是 EXP 时，使用 SFU；否则使用 CUDA Core
+  val isExpInstrVec = Wire(Vec(numCores, Bool()))
+  val isExpInstrRegVec = RegNext(isExpInstrVec)  // 延迟 1 周期以匹配 SFU 延迟
+
   for (i <- 0 until numCores) {
-    cudaCores(i).io.valid := dispatcher.io.coreValid(i)
+    val isExpInstr = dispatcher.io.coreOp(i) === GpuOpcode.EXP
+    isExpInstrVec(i) := isExpInstr
+
+    // CUDA Core 连接（非 EXP 指令）
+    cudaCores(i).io.valid := dispatcher.io.coreValid(i) && !isExpInstr
     cudaCores(i).io.op := dispatcher.io.coreOp(i)
     cudaCores(i).io.rs1 := dispatcher.io.coreRs1(i)
     cudaCores(i).io.rs2 := dispatcher.io.coreRs2(i)
     cudaCores(i).io.rs3 := dispatcher.io.coreRs3(i)
 
-    dispatcher.io.coreDone(i) := cudaCores(i).io.done
-    dispatcher.io.coreRd(i) := cudaCores(i).io.rd
+    // SFU 连接（EXP 指令）
+    // 每个 core 对应一个 lane，使用对应的 SFU
+    if (i < warpWidth) {
+      sfus(i).io.valid := dispatcher.io.coreValid(i) && isExpInstr
+      sfus(i).io.op := dispatcher.io.coreOp(i)
+      sfus(i).io.x := dispatcher.io.coreRs1(i)
+    }
+
+    // 结果选择：EXP 指令使用 SFU 结果，其他使用 CUDA Core 结果
+    // 使用延迟后的 isExpInstr 以匹配 SFU 的 1 周期延迟
+    val sfuResult = if (i < warpWidth) sfus(i).io.result else 0.S
+    val sfuDone = if (i < warpWidth) sfus(i).io.done else false.B
+
+    dispatcher.io.coreDone(i) := Mux(isExpInstrRegVec(i), sfuDone, cudaCores(i).io.done)
+    dispatcher.io.coreRd(i) := Mux(isExpInstrRegVec(i), sfuResult, cudaCores(i).io.rd)
   }
 
   // === 内存访问处理 ===

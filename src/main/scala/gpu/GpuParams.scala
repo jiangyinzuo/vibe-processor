@@ -26,4 +26,5 @@ object GpuOpcode {
   val MUL  = 0x5.U(4.W)  // Rd = Rs1 * Rs2
   val MAD  = 0x6.U(4.W)  // Rd = Rs1 * Rs2 + Rs3
   val SHM  = 0x7.U(4.W)  // SharedMem ops (sub-opcode in imm field)
+  val EXP  = 0x8.U(4.W)  // Rd = e^Rs1 (Special Function Unit)
 }

@@ -160,8 +160,8 @@ class InstructionDispatcher(
           io.warpUpdate(warpId).setState.valid := true.B
           io.warpUpdate(warpId).setState.bits := WarpState.Halted
         }
-        is(GpuOpcode.ADD, GpuOpcode.MUL, GpuOpcode.MAD) {
-          // 算术指令: 分发到 CUDA Core
+        is(GpuOpcode.ADD, GpuOpcode.MUL, GpuOpcode.MAD, GpuOpcode.EXP) {
+          // 算术指令和 SFU 指令: 分发到 CUDA Core 或 SFU
           for (lane <- 0 until warpWidth) {
             val coreId = coreIdx + lane
             if (coreId < numCores) {
@@ -173,7 +173,7 @@ class InstructionDispatcher(
               io.regRdAddr(coreId).rs2 := rs2
               io.regRdAddr(coreId).rs3 := rs3
 
-              // 分发到 CUDA Core
+              // 分发到 CUDA Core（EXP 指令会在 SM_Shared 中被重定向到 SFU）
               io.coreValid(coreId) := true.B
               io.coreOp(coreId) := op
               io.coreRs1(coreId) := io.regRdData(coreId).rs1
@@ -244,17 +244,12 @@ class InstructionDispatcher(
   // === 结果写回 ===
   // CUDA Core 完成计算后，写回寄存器文件
   // 需要保存指令的 rd 字段（目标寄存器）
-  val wbRd = Wire(Vec(numCores, UInt(4.W)))
-  val wbWarpId = Wire(Vec(numCores, UInt(log2Ceil(numWarps).W)))
-  val wbLaneId = Wire(Vec(numCores, UInt(log2Ceil(warpWidth).W)))
+  // 使用寄存器持久保存，避免在没有新指令分发时被清零
+  val wbRdReg = RegInit(VecInit(Seq.fill(numCores)(0.U(4.W))))
+  val wbWarpIdReg = RegInit(VecInit(Seq.fill(numCores)(0.U(log2Ceil(numWarps).W))))
+  val wbLaneIdReg = RegInit(VecInit(Seq.fill(numCores)(0.U(log2Ceil(warpWidth).W))))
 
-  for (i <- 0 until numCores) {
-    wbRd(i) := 0.U
-    wbWarpId(i) := 0.U
-    wbLaneId(i) := 0.U
-  }
-
-  // 在分发时记录 rd（重新遍历，与分发逻辑保持一致）
+  // 在分发时更新写回信息
   var wbCoreIdx = 0
   for (s <- 0 until numSchedulers) {
     when(io.selectedWarp(s).valid) {
@@ -263,13 +258,13 @@ class InstructionDispatcher(
       val op = instr(31, 28)
       val rd = instr(27, 24)
 
-      when(op === GpuOpcode.ADD || op === GpuOpcode.MUL || op === GpuOpcode.MAD) {
+      when(op === GpuOpcode.ADD || op === GpuOpcode.MUL || op === GpuOpcode.MAD || op === GpuOpcode.EXP) {
         for (lane <- 0 until warpWidth) {
           val coreId = wbCoreIdx + lane
           if (coreId < numCores) {
-            wbRd(coreId) := rd
-            wbWarpId(coreId) := warpId
-            wbLaneId(coreId) := lane.U
+            wbRdReg(coreId) := rd
+            wbWarpIdReg(coreId) := warpId
+            wbLaneIdReg(coreId) := lane.U
           }
         }
       }
@@ -277,10 +272,7 @@ class InstructionDispatcher(
     }
   }
 
-  val wbRdReg = RegNext(wbRd)
-  val wbWarpIdReg = RegNext(wbWarpId)
-  val wbLaneIdReg = RegNext(wbLaneId)
-
+  // 写回逻辑
   for (i <- 0 until numCores) {
     when(io.coreDone(i)) {
       io.regWrAddr(i).valid := true.B
