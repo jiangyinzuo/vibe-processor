@@ -27,10 +27,61 @@
 
 ### 环境要求
 
-- Scala 2.13+
-- sbt 1.12+
-- Verilator 5.0+
-- Java 21+
+- JDK 17+（推荐 JDK 21 LTS）
+- sbt 1.12.10（由 `project/build.properties` 固定）
+- Scala 2.13.18（由 `build.sbt` 固定）
+- Chisel 7.9.0（由 `build.sbt` 自动下载）
+- Verilator 5.0+（ChiselSim/svsim 测试需要）
+
+### 安装 Chisel 环境
+
+Chisel 本身是 Scala/sbt 依赖，不需要单独安装；首次运行 `sbt` 时会根据 `build.sbt` 自动下载 Chisel 7.9.0、Chisel compiler plugin 和 ScalaTest。
+
+**Linux / WSL (Ubuntu/Debian, x86_64 或 ARM64)：**
+
+```bash
+sudo apt-get update
+sudo apt-get install -y curl gzip git make g++ verilator
+
+case "$(uname -m)" in
+  x86_64)
+    CS_URL="https://github.com/coursier/coursier/releases/latest/download/cs-x86_64-pc-linux.gz"
+    ;;
+  aarch64|arm64)
+    CS_URL="https://github.com/VirtusLab/coursier-m1/releases/latest/download/cs-aarch64-pc-linux.gz"
+    ;;
+  *)
+    echo "Unsupported architecture: $(uname -m)" >&2
+    exit 1
+    ;;
+esac
+
+curl -fL "$CS_URL" | gzip -d > cs
+chmod +x cs
+./cs setup --jvm 21
+```
+
+执行完 `cs setup` 后，重新打开终端，或临时补上 coursier 的 bin 目录：
+
+```bash
+export PATH="$PATH:$HOME/.local/share/coursier/bin"
+```
+
+**macOS (Homebrew)：**
+
+```bash
+brew install coursier/formulas/coursier verilator
+cs setup --jvm 21
+```
+
+验证环境：
+
+```bash
+java -version
+sbt --version
+verilator --version
+sbt "testOnly ascend.PETest"
+```
 
 ### 运行测试
 
@@ -91,7 +142,8 @@ vibe-processor/
 │   │   │   ├── SystolicArray.scala
 │   │   │   └── ...
 │   │   ├── gpu/             # GPU 实现
-│   │   │   ├── SM_Shared.scala
+│   │   │   ├── SM.scala
+│   │   │   ├── SMSubPartition.scala
 │   │   │   ├── WarpContext.scala
 │   │   │   ├── SharedRegisterFile.scala
 │   │   │   └── ...

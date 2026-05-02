@@ -26,13 +26,14 @@
 **目标**: 将 SFU 集成到 GPU 架构中
 
 **实现**:
-- 在 `SM_Shared.scala` 中实例化 warpWidth 个 SFU
+- 在 `SMSubPartition.scala` 中实例化 warpWidth 个 SFU
 - 在 `InstructionDispatcher.scala` 中添加 EXP 指令分发
 - 根据指令类型路由到 CUDA Core 或 SFU
 - 添加结果选择逻辑
 
 **文件**:
-- `src/main/scala/gpu/SM_Shared.scala`
+- `src/main/scala/gpu/SMSubPartition.scala`
+- `src/main/scala/gpu/SM.scala`
 - `src/main/scala/gpu/InstructionDispatcher.scala`
 
 ### 第 3 阶段：测试和调试
@@ -104,7 +105,7 @@ val done_reg = RegNext(io.valid, false.B)
 
 **根本原因**: `isExpInstr` 信号时序不匹配
 
-在 `SM_Shared.scala` 中，`isExpInstr` 用于选择 SFU 或 CUDA Core 的结果，但这个信号是在**当前周期**计算的，而 SFU 有 1 周期延迟。
+在 `SMSubPartition.scala` 中，`isExpInstr` 用于选择 SFU 或 CUDA Core 的结果，但这个信号是在**当前周期**计算的，而 SFU 有 1 周期延迟。
 
 **时序分析**:
 
@@ -198,7 +199,7 @@ CUDA Core      SFU
 - **输出范围**: [e^-8, e^8] ≈ [0.000335, 2981]
 - **查找表大小**: 65 个条目 × 32 bits = 260 bytes
 - **延迟**: 1 周期
-- **SFU 数量**: warpWidth 个（4 或 8）
+- **SFU 数量**: 当前 8 个（2 个 sub-partition × warpWidth=4）
 
 ### 性能
 
@@ -247,7 +248,7 @@ CUDA Core      SFU
 - 简化调度：不需要 lane 之间的仲裁
 
 **缺点**:
-- 增加了硬件资源消耗（4-8 个 SFU）
+- 增加了硬件资源消耗（当前 8 个 SFU）
 
 **权衡**: 真实 GPU 通常每个 SM 只有 4 个 SFU，需要多周期完成一个 Warp
 
@@ -300,7 +301,8 @@ CUDA Core      SFU
 
 - `src/main/scala/gpu/GpuParams.scala`: +1 行
 - `src/main/scala/gpu/InstructionDispatcher.scala`: +2 行
-- `src/main/scala/gpu/SM_Shared.scala`: +30 行
+- `src/main/scala/gpu/SMSubPartition.scala`: SFU 与 CudaCore lane group
+- `src/main/scala/gpu/SM.scala`: sub-partition 顶层连接
 
 ### 文档
 

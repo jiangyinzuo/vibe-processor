@@ -8,9 +8,9 @@ SFU（Special Function Unit）是 GPU 中用于计算超越函数的专用硬件
 
 ### 1. 架构设计
 
-- **数量**: 每个 SM 有 `warpWidth` 个 SFU（当前为 4 或 8 个）
-- **延迟**: 3 周期流水线
-- **吞吐量**: 每周期可以处理一个 Warp 的所有 lane
+- **数量**: 每个 SMSubPartition 有 `warpWidth` 个 SFU；当前 2 个分区共 8 个 SFU
+- **延迟**: 1 周期（与 CudaCore 对齐）
+- **吞吐量**: 每个 sub-partition 每周期可以处理一个 Warp 的所有 lane
 - **数据格式**: Q16.16 定点数（16位整数 + 16位小数）
 
 ### 2. 实现方法
@@ -26,10 +26,9 @@ SFU（Special Function Unit）是 GPU 中用于计算超越函数的专用硬件
    - 公式：`result = v0 + (v1 - v0) × frac / 4`
    - frac 取输入的小数部分高 2 位（表示 0/4, 1/4, 2/4, 3/4）
 
-3. **流水线**
-   - Stage 1: 查表（计算索引，读取 v0 和 v1）
-   - Stage 2: 线性插值
-   - Stage 3: 输出
+3. **输出寄存**
+   - 组合逻辑完成查表和线性插值
+   - 结果寄存 1 周期后输出
 
 ### 3. 精度
 
@@ -88,12 +87,12 @@ val program = Seq(
 
 ### 延迟
 
-- **SFU 延迟**: 3 周期
+- **SFU 延迟**: 1 周期
 - **总延迟**: 取决于指令流水线
   - EXP 指令本身: 1 周期（发射）
-  - SFU 计算: 3 周期
+  - SFU 计算: 1 周期
   - 写回: 1 周期
-  - 总计: ~5 周期
+  - 总计: ~3 周期
 
 ### 吞吐量
 
@@ -104,7 +103,7 @@ val program = Seq(
 
 ### NVIDIA GPU
 
-- **SFU 数量**: 每个 SM 有 4 个 SFU
+- **SFU 数量**: 每个 SM 通常有多个 SFU，随架构和分区而定
 - **延迟**: 16-32 周期
 - **支持的函数**: exp, log, sin, cos, sqrt, rsqrt 等
 - **实现**: 查找表 + 二次插值
@@ -118,8 +117,8 @@ val program = Seq(
 
 ### 玩具 GPU（本实现）
 
-- **SFU 数量**: 每个 SM 有 4-8 个 SFU
-- **延迟**: 3 周期
+- **SFU 数量**: 当前每个 SM 8 个 SFU（2 个 sub-partition × 4 lane）
+- **延迟**: 1 周期
 - **支持的函数**: exp（可扩展）
 - **实现**: 查找表 + 线性插值
 
@@ -128,7 +127,8 @@ val program = Seq(
 ```
 src/main/scala/gpu/
 ├── SFU.scala                    # SFU 模块实现
-├── SM_Shared.scala              # SM 中集成 SFU
+├── SMSubPartition.scala          # 分区内集成 SFU 和 CudaCore
+├── SM.scala                      # SM 顶层连接 sub-partition
 ├── InstructionDispatcher.scala  # 指令分发器（支持 EXP）
 └── GpuParams.scala              # 添加 EXP 操作码
 

@@ -15,7 +15,7 @@
 - 查找表：65 个条目，步长 0.25
 - 延迟：1 周期
 
-**集成到 SM_Shared**
+**集成到 SM**
 - 每个 lane 配备一个 SFU（warpWidth 个 SFU）
 - 与 CUDA Core 并行工作
 - 共享相同的寄存器文件接口
@@ -172,7 +172,8 @@ val expLUT = VecInit(Seq(
 ## 文件清单
 
 - `src/main/scala/gpu/SFU.scala` - SFU 模块实现
-- `src/main/scala/gpu/SM_Shared.scala` - SFU 集成到 SM
+- `src/main/scala/gpu/SMSubPartition.scala` - SFU 集成到 SM 内部分区
+- `src/main/scala/gpu/SM.scala` - sub-partition 顶层连接
 - `src/main/scala/gpu/InstructionDispatcher.scala` - 指令分发和写回逻辑
 - `src/main/scala/gpu/GpuParams.scala` - EXP 操作码定义
 - `src/test/scala/gpu/SFUTest.scala` - SFU 单元测试

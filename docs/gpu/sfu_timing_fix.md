@@ -23,7 +23,7 @@ SFUIntegrationTest: ❌ 0/1 失败
 
 ## 根本原因
 
-**时序不匹配问题**：在 SM_Shared.scala 中，`isExpInstr` 信号用于选择 SFU 或 CUDA Core 的结果，但这个信号是在**当前周期**根据分发的指令计算的。
+**时序不匹配问题**：在 SMSubPartition.scala 中，`isExpInstr` 信号用于选择 SFU 或 CUDA Core 的结果，但这个信号是在**当前周期**根据分发的指令计算的。
 
 ### 问题分析
 
@@ -157,7 +157,7 @@ io.done := doneReg
 
 ## 修复文件
 
-- `src/main/scala/gpu/SM_Shared.scala`: 添加 `isExpInstrRegVec` 延迟信号
+- `src/main/scala/gpu/SMSubPartition.scala`: 添加 `isExpInstrRegVec` 延迟信号
 
 ## 测试验证
 

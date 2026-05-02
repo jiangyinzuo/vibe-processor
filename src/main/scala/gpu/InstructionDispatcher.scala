@@ -173,7 +173,7 @@ class InstructionDispatcher(
               io.regRdAddr(coreId).rs2 := rs2
               io.regRdAddr(coreId).rs3 := rs3
 
-              // 分发到 CUDA Core（EXP 指令会在 SM_Shared 中被重定向到 SFU）
+              // 分发到 CUDA Core（EXP 指令会在 SM 中被重定向到 SFU）
               io.coreValid(coreId) := true.B
               io.coreOp(coreId) := op
               io.coreRs1(coreId) := io.regRdData(coreId).rs1

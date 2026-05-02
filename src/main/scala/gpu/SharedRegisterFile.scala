@@ -60,9 +60,27 @@ class SharedRegisterFile(
     when(io.rdAddr(i).valid) {
       val warpId = io.rdAddr(i).warpId
       val laneId = io.rdAddr(i).laneId
-      io.rdData(i).rs1 := regs(warpId)(laneId)(io.rdAddr(i).rs1)
-      io.rdData(i).rs2 := regs(warpId)(laneId)(io.rdAddr(i).rs2)
-      io.rdData(i).rs3 := regs(warpId)(laneId)(io.rdAddr(i).rs3)
+      val rs1Data = WireDefault(regs(warpId)(laneId)(io.rdAddr(i).rs1))
+      val rs2Data = WireDefault(regs(warpId)(laneId)(io.rdAddr(i).rs2))
+      val rs3Data = WireDefault(regs(warpId)(laneId)(io.rdAddr(i).rs3))
+
+      // Forward same-cycle writeback so dependent back-to-back instructions
+      // (for example EXP -> ST) observe the just-produced value.
+      for (j <- 0 until numPorts) {
+        when(
+          io.wrAddr(j).valid &&
+            io.wrAddr(j).warpId === warpId &&
+            io.wrAddr(j).laneId === laneId
+        ) {
+          when(io.wrAddr(j).rd === io.rdAddr(i).rs1) { rs1Data := io.wrData(j) }
+          when(io.wrAddr(j).rd === io.rdAddr(i).rs2) { rs2Data := io.wrData(j) }
+          when(io.wrAddr(j).rd === io.rdAddr(i).rs3) { rs3Data := io.wrData(j) }
+        }
+      }
+
+      io.rdData(i).rs1 := rs1Data
+      io.rdData(i).rs2 := rs2Data
+      io.rdData(i).rs3 := rs3Data
     }.otherwise {
       io.rdData(i).rs1 := 0.S
       io.rdData(i).rs2 := 0.S

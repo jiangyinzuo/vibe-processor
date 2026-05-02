@@ -2,7 +2,7 @@
 
 ## 概述
 
-玩具版英伟达 GPU：4×SM，SIMT 执行模型 + Warp 调度 + 可配置存储延迟
+玩具版英伟达 GPU：4×SM，共享 CUDA Core 架构 + Warp 调度 + 可配置存储延迟
 
 使用 Chisel 7 (Scala) 编写，Verilator (via svsim) 仿真，ScalaTest 验证。
 
@@ -15,25 +15,30 @@
 ![GPU 架构图](../diagrams/gpu_architecture.svg)
 
 - 4 个 SM 并行执行相同程序
-- 每个 SM 内 4 个 Warp (每 Warp 4 线程)，**双调度器** Round-Robin 调度
+- 每个 SM 内 4 个轻量级 WarpContext (每 Warp 4 线程)
+- 每个 SM 显式拆成 2 个 SMSubPartition，每个分区管理 2 个 WarpContext、1 个 WarpScheduler 和 1 组 lane 执行单元
+- SharedRegisterFile、SharedMem 和访存请求路径仍是 SM 级共享资源，不再保留每 Warp 独占执行单元的旧实现
 - 共享 GlobalMem 和 InstrMem，每个 SM 有私有 SharedMem
 
 ---
 
 ## 2. SIMT 执行模型
 
-- **Warp** = 4 条 lane（线程），共享 PC，SIMT 并行执行
-- **双 WarpScheduler**：2 个独立调度器，每周期可并行执行 2 个 Warp
-- **CudaCore**：单周期 ALU (ADD/MUL/MAD)，寄存器输出
+- **WarpContext** = 4 条 lane（线程）的轻量级执行上下文，保存 PC/状态/访存等待信息
+- **SMSubPartition**：每个分区包含 1 个 WarpScheduler、4 个 CudaCore、4 个 SFU
+- **双 WarpScheduler**：2 个分区各有 1 个独立调度器，每周期最多并行发射 2 个 Warp
+- **分区内 CudaCore**：单周期 ALU (ADD/MUL/MAD)，由 Dispatcher 映射到对应分区的 lane group
+- **分区内 SFU**：特殊函数单元，支持 EXP
+- **SharedRegisterFile**：按 `(warpId, laneId, regId)` 索引的 SM 级共享寄存器文件
 - **延迟隐藏**：Warp 在 LD 等待期间，scheduler 调度其他 Warp
 
 ### 双调度器架构
 
 ```
 每个 SM:
-  - 2 个 WarpScheduler
-  - Scheduler 0: 管理 Warp 0, 1
-  - Scheduler 1: 管理 Warp 2, 3
+  - 2 个 SMSubPartition
+  - SubPartition 0: Scheduler 0 管理 Warp 0, 1，拥有 lane 0..3 执行单元
+  - SubPartition 1: Scheduler 1 管理 Warp 2, 3，拥有 lane 4..7 执行单元
   - 每周期可并行执行 2 个 Warp（如果资源允许）
   - 资源仲裁：GlobalMem 和 SharedMem 优先级仲裁
 ```
@@ -73,14 +78,14 @@
 **Warp 主动让出时间片**：
 
 ```scala
-// Warp 在访存时主动进入等待状态
+// WarpContext 在访存时进入 Stalled 状态
 is(GpuOpcode.LD) {
-  state := sMemWait  // 主动让出时间片
-  io.busy := true    // 通知调度器"我在等待"
+  state := WarpState.Stalled  // 主动让出时间片
 }
 
-// 调度器跳过 busy 的 Warp
-schedulers(s).io.warpHalted(w) := warps(warpId).io.halted || warps(warpId).io.busy
+// SubPartition 内调度器跳过 Halted/Stalled 的 Warp
+scheduler.io.warpHalted(w) :=
+  warpState(w) === WarpState.Halted || warpState(w) === WarpState.Stalled
 ```
 
 **关键特点**：
@@ -98,11 +103,11 @@ schedulers(s).io.warpHalted(w) := warps(warpId).io.halted || warps(warpId).io.bu
 |------|------|------|------|----------|
 | GlobalMem | Mem | 4096 | Warp 内计数器 (默认10) | 全局 (4 SM 共享) |
 | SharedMem (per-SM) | SyncReadMem | 256 | 1 cycle | SM 内 |
-| RegFile (per-Warp) | Reg | 16×4 | 0 | Warp 私有 |
+| SharedRegisterFile | Reg | 4 Warp × 4 Lane × 16 Reg | 0 | SM 内 |
 
 ---
 
-## 4. 指令集 (8 条)
+## 4. 指令集 (9 条)
 
 详见 [isa.md](../isa.md#gpu-指令集)
 
@@ -118,6 +123,7 @@ schedulers(s).io.warpHalted(w) := warps(warpId).io.halted || warps(warpId).io.bu
 | 0x5 | MUL | Rd = Rs1 × Rs2 |
 | 0x6 | MAD | Rd = Rs1 × Rs2 + Rs3 |
 | 0x7 | SHM | SharedMem 操作 |
+| 0x8 | EXP | Rd = e^Rs1 |
 
 ---
 
@@ -198,9 +204,13 @@ sbt "testOnly gpu.*"
 src/main/scala/gpu/
 ├── GpuParams.scala         # GPU 参数配置
 ├── CudaCore.scala          # CUDA Core (ADD/MUL/MAD)
-├── Warp.scala              # Warp (4 线程 SIMT + 延迟模型)
+├── SFU.scala               # Special Function Unit (EXP)
+├── SMSubPartition.scala    # SM 内部分区：scheduler + lane 执行单元
+├── WarpContext.scala       # 轻量级 Warp 执行上下文
 ├── WarpScheduler.scala     # Round-Robin 调度器
-├── SM.scala                # Streaming Multiprocessor (双调度器)
+├── SharedRegisterFile.scala  # SM 级共享寄存器文件
+├── InstructionDispatcher.scala # 指令分发、访存请求、写回
+├── SM.scala                # 唯一保留的 SM 实现（共享架构）
 └── ToyGpuTop.scala         # 顶层 (4×SM + GlobalMem)
 ```
 

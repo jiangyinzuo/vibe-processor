@@ -38,8 +38,8 @@
   - 支持 EXP 指令分发
   - 添加 EXP 到写回逻辑
 
-- **src/main/scala/gpu/SM_Shared.scala**
-  - 实例化 warpWidth 个 SFU
+- **src/main/scala/gpu/SMSubPartition.scala**
+  - 每个分区实例化 warpWidth 个 SFU
   - 根据指令类型路由到 CUDA Core 或 SFU
   - 结果选择逻辑
 
@@ -112,7 +112,7 @@ CUDA Core      SFU
 
 ### 资源消耗
 
-- **SFU 数量**: 4-8 个（取决于 warpWidth）
+- **SFU 数量**: 当前 8 个（2 个 sub-partition × warpWidth=4）
 - **查找表**: 260 bytes per SFU
 - **总存储**: ~1-2 KB
 
@@ -120,7 +120,7 @@ CUDA Core      SFU
 
 | 特性 | NVIDIA GPU | 昇腾 NPU | 玩具 GPU |
 |------|-----------|---------|---------|
-| SFU 数量 | 4 per SM | Vector Unit | 4-8 per SM |
+| SFU 数量 | 多个/SM，按架构分区 | Vector Unit | 8 per SM |
 | 延迟 | 16-32 周期 | ~10 周期 | 1 周期 |
 | 支持函数 | exp, log, sin, cos, sqrt, rsqrt | exp, log, sin, cos | exp |
 | 实现方法 | 查找表 + 二次插值 | 查找表 + 线性插值 | 查找表 + 线性插值 |
@@ -180,7 +180,7 @@ CUDA Core      SFU
 
 **原因**: 
 1. 写回逻辑中缺少 EXP 指令的 rd 记录
-2. SFU 3 周期延迟与 CUDA Core 1 周期延迟不匹配
+2. 早期 SFU 3 周期延迟与 CUDA Core 1 周期延迟不匹配
 
 **解决**:
 1. 在 InstructionDispatcher 的写回逻辑中添加 EXP
@@ -202,7 +202,7 @@ CUDA Core      SFU
 - **修改代码**: ~50 行
   - GpuParams.scala: 1 行
   - InstructionDispatcher.scala: 2 行
-  - SM_Shared.scala: 27 行
+  - SM.scala: 27 行
 
 ## 总结
 

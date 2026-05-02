@@ -53,7 +53,7 @@ class ToyGpuTop(
   // CUDA Core 数量 = 2 × warpWidth（支持双调度器并发）
   // 利用率 80-95%，相比旧架构（per-Warp）节省 50% 硬件资源
   val numCores = 2 * warpWidth  // 4 线程 → 8 cores, 8 线程 → 16 cores
-  val sms = Array.fill(numSMs)(Module(new SM_Shared(numWarps, warpWidth, numCores, dw, memLatency = gmemLatency)))
+  val sms = Array.fill(numSMs)(Module(new SM(numWarps, warpWidth, numCores, dw, memLatency = gmemLatency)))
 
   val smHalted = VecInit(sms.map(_.io.allHalted))
   io.allHalted := smHalted.asUInt.andR

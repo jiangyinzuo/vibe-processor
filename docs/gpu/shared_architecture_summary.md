@@ -48,12 +48,18 @@ class SharedRegisterFile(numRegs: Int, warpWidth: Int, numWarps: Int) extends Mo
 - 内存指令设置等待状态，延迟写回
 - 检测写端口冲突，避免同时写回
 
-#### 4. SM_Shared（共享架构 SM）
+#### 4. SMSubPartition（SM 内部分区）
+- 每个分区包含 1 个 WarpScheduler
+- 每个分区管理一组本地 WarpContext
+- 每个分区拥有一组 lane 执行单元（CudaCore + SFU）
+- 分区输出一个被选中的全局 warpId，交给 SM 顶层的 InstructionDispatcher
+
+#### 5. SM（共享架构 SM）
 **执行流程：**
-1. Round-robin 调度器选择 Ready 状态的 Warp
+1. 每个 SMSubPartition 的 Round-robin 调度器选择 Ready 状态的 Warp
 2. Dispatcher 读取指令并执行
 3. 从 SharedRegisterFile 读取操作数
-4. 使用共享 ALU 执行算术/逻辑运算
+4. 使用对应 sub-partition 的 CudaCore/SFU 执行运算
 5. 发起全局内存读写请求
 6. 结果写回 SharedRegisterFile
 
@@ -72,7 +78,7 @@ class SharedRegisterFile(numRegs: Int, warpWidth: Int, numWarps: Int) extends Mo
 #### 3. 寄存器读取时机
 **问题：** LOAD/STORE 指令需要先读取 rs1 寄存器获取地址
 
-**解决：** 在 SM_Shared 中提前读取寄存器，传递给 Dispatcher
+**解决：** 在 SM 中提前读取寄存器，传递给 Dispatcher
 
 ## 性能对比
 
@@ -80,8 +86,8 @@ class SharedRegisterFile(numRegs: Int, warpWidth: Int, numWarps: Int) extends Mo
 | 架构 | CUDA Core 数量 | 活跃 Warp | 利用率 |
 |------|---------------|-----------|--------|
 | 原始（独立） | 16 (4 Warp × 4 Core) | 1 | 6.25% |
-| 新架构（共享） | 4 (共享) | 1 | 25% |
-| 理论最大 | 4 (共享) | 4 | 100% |
+| 新架构（2 分区） | 8 (2 × 4 Core) | 1 | 50% |
+| 理论最大 | 8 (2 × 4 Core) | 2 | 100% |
 
 ### 测试结果
 **4-SM 向量加法：**
@@ -98,17 +104,21 @@ class SharedRegisterFile(numRegs: Int, warpWidth: Int, numWarps: Int) extends Mo
 
 ## 代码变更
 
-### 新增文件
+### 共享架构保留文件
 - `src/main/scala/gpu/WarpContext.scala`
 - `src/main/scala/gpu/SharedRegisterFile.scala`
 - `src/main/scala/gpu/InstructionDispatcher.scala`
-- `src/main/scala/gpu/SM_Shared.scala`
-- `src/main/scala/gpu/SM_IO.scala`
+- `src/main/scala/gpu/SMSubPartition.scala`
+- `src/main/scala/gpu/SM.scala`
 - `src/test/scala/gpu/SharedArchDebug.scala`
 - `src/test/scala/gpu/QuickSharedArchTest.scala`
 
 ### 修改文件
-- `src/main/scala/gpu/ToyGpuTop.scala` - 默认使用共享架构
+- `src/main/scala/gpu/ToyGpuTop.scala` - 使用共享架构 SM
+
+### 移除旧实现
+- 旧版每 Warp 独占执行单元模块
+- 旧版双架构兼容接口
 
 ## 总结
 

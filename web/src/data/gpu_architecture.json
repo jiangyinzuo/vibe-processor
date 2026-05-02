@@ -29,7 +29,7 @@
       "id": "gmem",
       "name": "GlobalMem",
       "type": "memory",
-      "description": "片外 4096×128b\nLatency in Warp",
+      "description": "片外 4096×128b\nLatency in WarpContext",
       "position": { "x": 350, "y": 50 },
       "size": { "width": 220, "height": 120 },
       "style": {
@@ -63,9 +63,9 @@
       "children": [
         {
           "id": "sched0",
-          "name": "WarpScheduler",
-          "type": "control",
-          "description": "Round-Robin",
+          "name": "SMSubPartition 0",
+          "type": "compute",
+          "description": "Scheduler + lane group",
           "position": { "x": 20, "y": 30 },
           "size": { "width": 400, "height": 80 },
           "style": {
@@ -75,14 +75,14 @@
             "shape": "rectangle"
           },
           "metadata": {
-            "sourceFile": "src/main/scala/gpu/WarpScheduler.scala"
+            "sourceFile": "src/main/scala/gpu/SMSubPartition.scala"
           }
         },
         {
           "id": "warp0_0",
           "name": "Warp 0",
           "type": "compute",
-          "description": "4×CudaCore\nRegFile 16×32b",
+          "description": "WarpContext\nPC/state/mem wait",
           "position": { "x": 20, "y": 140 },
           "size": { "width": 190, "height": 160 },
           "style": {
@@ -93,7 +93,7 @@
           },
           "metadata": {
             "warpId": 0,
-            "sourceFile": "src/main/scala/gpu/Warp.scala"
+            "sourceFile": "src/main/scala/gpu/WarpContext.scala"
           },
           "children": [
             {
@@ -111,7 +111,7 @@
               },
               "metadata": {
                 "capacity": "16×32b per thread",
-                "sourceFile": "src/main/scala/gpu/Warp.scala"
+                "sourceFile": "src/main/scala/gpu/SharedRegisterFile.scala"
               }
             },
             {
@@ -138,7 +138,7 @@
           "id": "warp0_1",
           "name": "Warp 1",
           "type": "compute",
-          "description": "4×CudaCore\nRegFile",
+          "description": "WarpContext\nPC/state",
           "position": { "x": 230, "y": 140 },
           "size": { "width": 190, "height": 160 },
           "style": {
@@ -149,14 +149,14 @@
           },
           "metadata": {
             "warpId": 1,
-            "sourceFile": "src/main/scala/gpu/Warp.scala"
+            "sourceFile": "src/main/scala/gpu/WarpContext.scala"
           }
         },
         {
           "id": "warp0_2",
           "name": "Warp 2",
           "type": "compute",
-          "description": "4×CudaCore\nRegFile",
+          "description": "WarpContext\nPC/state",
           "position": { "x": 20, "y": 320 },
           "size": { "width": 190, "height": 160 },
           "style": {
@@ -167,14 +167,14 @@
           },
           "metadata": {
             "warpId": 2,
-            "sourceFile": "src/main/scala/gpu/Warp.scala"
+            "sourceFile": "src/main/scala/gpu/WarpContext.scala"
           }
         },
         {
           "id": "warp0_3",
           "name": "Warp 3",
           "type": "compute",
-          "description": "4×CudaCore\nRegFile",
+          "description": "WarpContext\nPC/state",
           "position": { "x": 230, "y": 320 },
           "size": { "width": 190, "height": 160 },
           "style": {
@@ -185,7 +185,7 @@
           },
           "metadata": {
             "warpId": 3,
-            "sourceFile": "src/main/scala/gpu/Warp.scala"
+            "sourceFile": "src/main/scala/gpu/WarpContext.scala"
           }
         },
         {

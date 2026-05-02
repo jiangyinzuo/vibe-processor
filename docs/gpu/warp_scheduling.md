@@ -567,7 +567,7 @@ Warp 利用率：20 / (34 × 4) = 14.7%
 ## 参考资料
 
 - 代码实现：`src/main/scala/gpu/WarpScheduler.scala`
-- 代码实现：`src/main/scala/gpu/Warp.scala`
+- 代码实现：`src/main/scala/gpu/WarpContext.scala`
 - 代码实现：`src/main/scala/gpu/SM.scala`
 - 架构文档：`docs/architecture_zh.md` - 第二章
 - 性能对比：`docs/performance_comparison.md`

@@ -308,5 +308,5 @@ sbt "testOnly gpu.GpuIntegrationTest"
 
 - `docs/warp_scheduling.md` - Warp 调度与执行详解
 - `docs/multi_warp_execution.md` - 真实 GPU 的多 Warp 并行执行
-- `src/main/scala/gpu/SM.scala` - 双调度器实现
+- `src/main/scala/gpu/SM.scala` - 共享架构 SM 与双调度器实现
 - `src/test/scala/gpu/DualSchedulerTest.scala` - 性能测试
