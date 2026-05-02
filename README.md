@@ -5,17 +5,23 @@
 ## 🎯 项目特点
 
 - **NPU (昇腾风格)**: 收缩阵列架构，支持矩阵乘法和向量运算
-- **GPU (英伟达风格)**: SIMT 架构，Warp 调度，多 SM 并行
+- **GPU (英伟达风格)**: SIMT 架构，Warp 调度，多 SM 并行，共享 CUDA Core
 - **DMA-Compute Overlap**: 非阻塞 DMA，流水线优化，实际加速比 1.22×
 - **完整文档**: 架构说明、ISA 定义、性能分析
 
 ## 📊 性能亮点
 
+### NPU - DMA-Compute Overlap
 | 指标 | 顺序执行 | 流水线 Overlap | 提升 |
 |------|---------|---------------|------|
 | 总周期数 | 557 | 455 | **-18.3%** |
 | 重叠率 | 0.0% | **24.1%** | **+24.1%** |
-| 计算效率 | 8.1% | 9.9% | **+1.8%** |
+
+### GPU - 共享架构重构
+| 指标 | 原始架构 | 共享架构 | 提升 |
+|------|---------|---------|------|
+| 资源利用率 | 6.25% | 25-100% | **4-16× 提升** |
+| SM 利用率 | N/A | 85.7% | **高效** |
 
 ## 🚀 快速开始
 
@@ -56,27 +62,23 @@ sbt "runMain top.Elaborate --target gpu"
 
 ### 核心文档
 
-- **[文档索引](docs/DOCUMENTATION_INDEX.md)** - 所有文档的入口
+- **[项目状态](PROJECT_STATUS.md)** - 完成度、测试状态、性能数据
 - **[项目概览](docs/README.md)** - 项目介绍和架构概览
+- **[ISA 定义](docs/isa.md)** - 指令集架构
 
 ### NPU 文档
 
 - **[NPU 架构](docs/npu/architecture.md)** - 收缩阵列、DMA、多核并行
 - **[DMA-Compute Overlap](docs/npu/dma_overlap.md)** - 非阻塞 DMA、双缓冲、性能优化
 - **[性能测量](docs/npu/performance_measurement.md)** - 实际加速比 1.22×，重叠率 24.1%
-- **[架构差异](docs/npu/architecture_differences.md)** - 与真实昇腾的差距分析
 
 ### GPU 文档
 
 - **[GPU 架构](docs/gpu/architecture.md)** - SIMT、Warp、SM 架构
+- **[架构对比](docs/gpu/architecture_comparison.md)** - 玩具 vs 真实 GPU
+- **[共享架构总结](docs/gpu/shared_architecture_summary.md)** - 重构设计和性能提升
 - **[Warp 调度](docs/gpu/warp_scheduling.md)** - 调度策略和性能优化
 - **[双调度器](docs/gpu/dual_scheduler_summary.md)** - 双发射架构
-
-### 其他文档
-
-- **[ISA 定义](docs/isa.md)** - 指令集架构
-- **[性能对比](docs/performance_comparison.md)** - NPU vs GPU
-- **[交互式可视化](docs/interactive/index.html)** - 架构图可视化
 
 ## 🏗️ 项目结构
 
@@ -87,11 +89,11 @@ vibe-processor/
 │   │   ├── ascend/          # NPU 实现
 │   │   │   ├── AiCore.scala
 │   │   │   ├── SystolicArray.scala
-│   │   │   ├── CubeUnit.scala
 │   │   │   └── ...
 │   │   ├── gpu/             # GPU 实现
-│   │   │   ├── SM.scala
-│   │   │   ├── WarpScheduler.scala
+│   │   │   ├── SM_Shared.scala
+│   │   │   ├── WarpContext.scala
+│   │   │   ├── SharedRegisterFile.scala
 │   │   │   └── ...
 │   │   └── common/          # 共享组件
 │   └── test/scala/          # 测试
@@ -111,22 +113,22 @@ vibe-processor/
 - ✅ **8×8 收缩阵列** - 矩阵乘法加速
 - ✅ **向量单元** - VECADD, RELU 等操作
 - ✅ **DMA 引擎** - 非阻塞 DMA，支持 Overlap
-- ✅ **多核并行** - 2 个 AiCore，独立执行
+- ✅ **多核并行** - 4 个 AiCore，独立执行
 - ✅ **存储层次** - L0/UB/L2/HBM 四级存储
 - ✅ **性能计数器** - 精确的性能统计
 
 ### GPU (英伟达风格)
 
-- ✅ **SIMT 架构** - 32 线程 Warp
-- ✅ **多 SM** - 2 个 SM，独立调度
-- ✅ **Warp 调度器** - 双调度器，支持双发射
-- ✅ **寄存器文件** - 每线程独立寄存器
-- ✅ **共享内存** - SM 内共享
+- ✅ **SIMT 架构** - Warp 执行模型
+- ✅ **多 SM** - 4 个 SM，独立调度
+- ✅ **共享 CUDA Core** - SM 级别共享资源（符合真实 GPU 设计）
+- ✅ **双 Warp 调度器** - 支持双发射，2× 性能提升
+- ✅ **共享寄存器文件** - 多端口访问，高效写回
 - ✅ **全局内存** - 统一地址空间
 
 ## 📈 性能优化
 
-### DMA-Compute Overlap
+### NPU - DMA-Compute Overlap
 
 **实现：**
 - 非阻塞 DMA 指令（DMA_LOAD/DMA_STORE/DMA_WAIT）
@@ -139,23 +141,30 @@ vibe-processor/
 - 重叠率：**24.1%**
 - 节省周期：**102 个（18.3%）**
 
-**优化空间：**
-- 理论加速比：1.83×
-- 优化潜力：+50%
+### GPU - 共享架构重构
+
+**实现：**
+- CUDA Core 作为 SM 级别共享资源
+- Warp 只保存轻量级执行上下文
+- 内存数据缓冲解决组合逻辑问题
+- 写端口冲突处理
+
+**效果：**
+- 资源利用率：从 **6.25%** 提升到 **25-100%**
+- SM 利用率：**85.7%**
+- 架构模型：符合真实 GPU 设计
 
 ## 🧪 测试覆盖
 
 ```
-总测试数：     21 个
-通过：         21 个 ✅
+总测试数：     37 个
+通过：         37 个 ✅
 通过率：       100% 🎉
 ```
 
-**测试类型：**
-- 单元测试：CubeUnit, SystolicArray, VectorUnit, PE
-- 集成测试：IntegrationTest, MultiCoreTest
-- 性能测试：OverlapBenchmark, OverlapTest
-- 功能测试：LargeMatmulTest
+**NPU 测试 (21)：** IntegrationTest, PerfCounterTest, OverlapBenchmark, CubeUnitTest, SystolicArrayTest, VectorUnitTest, MultiCoreTest 等
+
+**GPU 测试 (16)：** GpuIntegrationTest, DualSchedulerTest, SharedArchDebug, QuickSharedArchTest, CudaCoreTest 等
 
 ## 🔬 学习价值
 
@@ -164,6 +173,7 @@ vibe-processor/
 - 非阻塞指令设计
 - 队列管理与流控
 - 双端口存储器
+- 共享资源架构
 - 性能计数器实现
 
 ### 系统优化
@@ -171,6 +181,7 @@ vibe-processor/
 - DMA-Compute Overlap 原理
 - 流水线设计
 - 双缓冲技术
+- 资源利用率优化
 - 性能分析方法
 
 ### 工程实践
@@ -186,41 +197,19 @@ vibe-processor/
 
 | 特性 | 玩具版本 | 真实昇腾 910 | 差距 |
 |------|---------|-------------|------|
-| 收缩阵列 | 8×8 | 16×16 或更大 | 4× |
-| AI Core 数量 | 2 | 32 | 16× |
-| L2 缓存 | 2KB | 8MB | 4000× |
-| 峰值算力 | ~0.004 TFLOPS | 256 TFLOPS | 64000× |
+| 收缩阵列 | 8×8 | 16×16+ | 4× |
+| AI Core 数量 | 4 | 32 | 8× |
+| 流水线级数 | 2 级 | 10-20 级 | 5-10× |
+| 重叠率 | 24.1% | 80-90% | 3-4× |
 
 ### GPU (vs NVIDIA A100)
 
 | 特性 | 玩具版本 | NVIDIA A100 | 差距 |
 |------|---------|-------------|------|
-| SM 数量 | 2 | 108 | 54× |
-| Warp 大小 | 32 | 32 | 1× |
-| 寄存器/线程 | 8 | 255 | 32× |
-| 共享内存 | 256B | 164KB | 656× |
-| 峰值算力 | ~0.001 TFLOPS | 19.5 TFLOPS | 19500× |
-
-## 🚀 未来工作
-
-### 短期（1-2 周）
-
-- 优化 buffer 切换逻辑
-- 增加 DMA 队列深度
-- 实现自动地址管理
-
-### 中期（1 个月）
-
-- DMA 优先级调度
-- 多级流水线优化
-- 增大 Tile 尺寸
-- 增加 L2 缓存
-
-### 长期（2-3 个月）
-
-- 与真实昇腾对比
-- 性能优化指南
-- 更多优化技术探索
+| SM 数量 | 4 | 108 | 27× |
+| Warp 大小 | 4 | 32 | 8× |
+| 调度器/SM | 2 | 4 | 2× |
+| 架构模型 | ✅ 共享 CUDA Core | ✅ 共享 CUDA Core | **一致** |
 
 ## 📝 引用
 
@@ -235,14 +224,10 @@ https://github.com/your-repo/vibe-processor
 
 本项目仅用于教学目的。
 
-## 🙏 致谢
-
-感谢所有为这个项目做出贡献的人！
-
 ---
 
-**版本：** v1.0  
-**完成日期：** 2026-05-01  
+**版本：** v2.0  
+**最后更新：** 2026-05-02  
 **状态：** ✅ 100% 完成  
-**测试通过率：** ✅ 100%  
-**性能提升：** ✅ 1.22× 加速比
+**测试通过率：** ✅ 100% (37/37)  
+**性能提升：** ✅ NPU 1.22× 加速比，GPU 4-16× 资源利用率提升
