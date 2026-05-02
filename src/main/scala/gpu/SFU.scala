@@ -131,7 +131,7 @@ class SFU(dw: Int = GpuParams.DataWidth) extends Module {
   ).map(_.S(dw.W)))
 
   // ============================================================
-  // 单周期实现（简化版）
+  // 3 级流水线实现
   // ============================================================
 
   // 将输入 x (Q16.16) 映射到查找表索引
@@ -142,19 +142,22 @@ class SFU(dw: Int = GpuParams.DataWidth) extends Module {
   // 提取小数部分用于插值
   val frac = x_shifted(15, 14)
 
-  // 查表
-  val v0 = expLUT(index)
-  val v1 = expLUT(Mux(index === 64.U, 64.U, index + 1.U))
+  val s0Valid = RegNext(io.valid && io.op === GpuOpcode.EXP, false.B)
+  val s0Index = RegNext(index, 0.U)
+  val s0Frac = RegNext(frac, 0.U)
 
-  // 线性插值
-  val delta = v1 - v0
-  val interp = (delta * frac.asSInt) >> 2
-  val exp_result = v0 + interp
+  val s1Valid = RegNext(s0Valid, false.B)
+  val s1V0 = RegNext(expLUT(s0Index), 0.S)
+  val s1V1 = RegNext(expLUT(Mux(s0Index === 64.U, 64.U, s0Index + 1.U)), 0.S)
+  val s1Frac = RegNext(s0Frac, 0.U)
 
-  // 输出（1 周期延迟，与 CUDA Core 一致）
-  val result_reg = RegNext(Mux(io.valid, exp_result, 0.S), 0.S)
-  val done_reg = RegNext(io.valid, false.B)
+  val delta = s1V1 - s1V0
+  val interp = (delta * s1Frac.asSInt) >> 2
+  val expResult = s1V0 + interp
 
-  io.result := result_reg
-  io.done := done_reg
+  val s2Valid = RegNext(s1Valid, false.B)
+  val s2Result = RegNext(Mux(s1Valid, expResult, 0.S), 0.S)
+
+  io.result := Mux(s2Valid, s2Result, 0.S)
+  io.done := s2Valid
 }

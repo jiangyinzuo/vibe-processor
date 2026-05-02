@@ -45,15 +45,16 @@ class SFUDebugTest extends AnyFunSpec with ChiselSim {
         dut.clock.step()
         dut.io.start.poke(false.B)
 
-        // 运行到 halt
+        // 运行到 halt。RF/EX/WB 和 SFU 都已流水化，EXP 程序需要更多周期。
+        val maxCycles = 80
         var cycles = 0
-        while (!dut.io.allHalted.peek().litToBoolean && cycles < 20) {
+        while (!dut.io.allHalted.peek().litToBoolean && cycles < maxCycles) {
           dut.clock.step()
           cycles += 1
         }
 
         println(s"Halted after $cycles cycles")
-        assert(dut.io.allHalted.peek().litToBoolean, s"Did not halt within 20 cycles")
+        assert(dut.io.allHalted.peek().litToBoolean, s"Did not halt within $maxCycles cycles")
 
         // 注意：我们无法直接读取寄存器，所以这个测试只能验证程序能正常执行
         println("EXP instruction executed successfully")
@@ -89,15 +90,16 @@ class SFUDebugTest extends AnyFunSpec with ChiselSim {
         dut.clock.step()
         dut.io.start.poke(false.B)
 
-        // 运行到 halt
+        // 运行到 halt。RF/EX/WB 和 SFU 都已流水化，EXP+STORE 程序需要更多周期。
+        val maxCycles = 80
         var cycles = 0
-        while (!dut.io.allHalted.peek().litToBoolean && cycles < 20) {
+        while (!dut.io.allHalted.peek().litToBoolean && cycles < maxCycles) {
           dut.clock.step()
           cycles += 1
         }
 
         println(s"Halted after $cycles cycles")
-        assert(dut.io.allHalted.peek().litToBoolean, s"Did not halt within 20 cycles")
+        assert(dut.io.allHalted.peek().litToBoolean, s"Did not halt within $maxCycles cycles")
 
         // 读取结果
         dut.io.gmemExt.en.poke(true.B)

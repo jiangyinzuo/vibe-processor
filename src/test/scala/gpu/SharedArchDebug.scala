@@ -156,15 +156,16 @@ class SharedArchDebug extends AnyFunSpec with ChiselSim {
         dut.clock.step()
         dut.io.start.poke(false.B)
 
-        // 运行到 halt
+        // 运行到 halt。流水化后 two-load 调试程序会超过旧的 50-cycle 上限。
+        val maxCycles = 100
         var cycles = 0
-        while (!dut.io.allHalted.peek().litToBoolean && cycles < 50) {
+        while (!dut.io.allHalted.peek().litToBoolean && cycles < maxCycles) {
           dut.clock.step()
           cycles += 1
         }
 
         println(s"Two LOADs: Halted after $cycles cycles")
-        assert(dut.io.allHalted.peek().litToBoolean, s"Did not halt within 50 cycles")
+        assert(dut.io.allHalted.peek().litToBoolean, s"Did not halt within $maxCycles cycles")
 
         // 读取 R0 的结果（存储在 gmem[10]）
         dut.io.gmemExt.en.poke(true.B)

@@ -55,8 +55,12 @@ class SharedRegisterFile(
   // 寄存器文件：4 Warp × 8 Lane × 16 Reg
   val regs = RegInit(VecInit.fill(numWarps, warpWidth, numRegs)(0.S(dataWidth.W)))
 
-  // === 读端口（组合逻辑）===
+  // === 读端口（1 周期延迟）===
   for (i <- 0 until numPorts) {
+    val rdRs1 = WireDefault(0.S(dataWidth.W))
+    val rdRs2 = WireDefault(0.S(dataWidth.W))
+    val rdRs3 = WireDefault(0.S(dataWidth.W))
+
     when(io.rdAddr(i).valid) {
       val warpId = io.rdAddr(i).warpId
       val laneId = io.rdAddr(i).laneId
@@ -78,14 +82,14 @@ class SharedRegisterFile(
         }
       }
 
-      io.rdData(i).rs1 := rs1Data
-      io.rdData(i).rs2 := rs2Data
-      io.rdData(i).rs3 := rs3Data
-    }.otherwise {
-      io.rdData(i).rs1 := 0.S
-      io.rdData(i).rs2 := 0.S
-      io.rdData(i).rs3 := 0.S
+      rdRs1 := rs1Data
+      rdRs2 := rs2Data
+      rdRs3 := rs3Data
     }
+
+    io.rdData(i).rs1 := RegNext(rdRs1, 0.S)
+    io.rdData(i).rs2 := RegNext(rdRs2, 0.S)
+    io.rdData(i).rs3 := RegNext(rdRs3, 0.S)
   }
 
   // === 写端口（时序逻辑）===

@@ -42,10 +42,11 @@ class SFUTimingDebug extends AnyFunSpec with ChiselSim {
         dut.clock.step()
         dut.io.start.poke(false.B)
 
-        // 运行并跟踪
+        // 运行并跟踪。RF/EX/WB 和 SFU 都已流水化，EXP+STORE 程序需要更多周期。
         println("\n=== Cycle-by-cycle trace ===")
+        val maxCycles = 80
         var cycles = 0
-        while (!dut.io.allHalted.peek().litToBoolean && cycles < 20) {
+        while (!dut.io.allHalted.peek().litToBoolean && cycles < maxCycles) {
           println(s"\nCycle $cycles:")
           println(s"  allHalted: ${dut.io.allHalted.peek().litToBoolean}")
 
@@ -54,7 +55,7 @@ class SFUTimingDebug extends AnyFunSpec with ChiselSim {
         }
 
         println(s"\nHalted after $cycles cycles")
-        assert(dut.io.allHalted.peek().litToBoolean, s"Did not halt within 20 cycles")
+        assert(dut.io.allHalted.peek().litToBoolean, s"Did not halt within $maxCycles cycles")
 
         // 读取结果
         dut.io.gmemExt.en.poke(true.B)

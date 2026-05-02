@@ -52,7 +52,8 @@ class SM(
   val warpsPerSubPartition = numWarps / numSubPartitions
 
   // === 共享资源 ===
-  val regFile = Module(new SharedRegisterFile(numWarps, warpWidth, numRegs = 16, dw, numCores))
+  val numRfPorts = warpWidth + 2 * numCores
+  val regFile = Module(new SharedRegisterFile(numWarps, warpWidth, numRegs = 16, dw, numRfPorts))
   val sharedMem = SyncReadMem(GpuParams.SharedDepth, Vec(warpWidth, SInt(dw.W)))
 
   // === Warp 上下文（轻量级）===
@@ -83,7 +84,7 @@ class SM(
   // 当有内存写回时，禁止发射新指令（避免寄存器文件写端口冲突）
   for (p <- 0 until numSubPartitions) {
     val subPartition = subPartitions(p)
-    subPartition.io.issueBlocked := hasMemWb
+    subPartition.io.issueBlocked := hasMemWb || dispatcher.io.issueBusy(p).asUInt.andR
     dispatcher.io.selectedWarp(p) := subPartition.io.selectedWarp
 
     for (w <- 0 until warpsPerSubPartition) {
@@ -102,6 +103,12 @@ class SM(
       subPartition.io.coreRs3(lane) := dispatcher.io.coreRs3(coreId)
       dispatcher.io.coreDone(coreId) := subPartition.io.coreDone(lane)
       dispatcher.io.coreRd(coreId) := subPartition.io.coreRd(lane)
+
+      subPartition.io.sfuValid(lane) := dispatcher.io.sfuValid(coreId)
+      subPartition.io.sfuOp(lane) := dispatcher.io.sfuOp(coreId)
+      subPartition.io.sfuRs1(lane) := dispatcher.io.sfuRs1(coreId)
+      dispatcher.io.sfuDone(coreId) := subPartition.io.sfuDone(lane)
+      dispatcher.io.sfuRd(coreId) := subPartition.io.sfuRd(lane)
     }
   }
 

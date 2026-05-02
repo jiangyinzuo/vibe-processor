@@ -1,12 +1,12 @@
-# DMA-Compute Overlap 优化
+# MTE-Compute Overlap 优化
 
 ## 概述
 
-本文档描述 NPU 中实现的 DMA-Compute Overlap 优化，允许数据传输（DMA）和计算（MATMUL）同时进行，从而提高硬件利用率。
+本文档描述 NPU 中实现的 MTE-Compute Overlap 优化。当前 AiCore 已拆成 Scalar dispatcher、AIC、AIV、MTE1、MTE2、MTE3；数据搬运和计算可以在不同通路上重叠执行。
 
 ## 架构改进
 
-### 1. 非阻塞 DMA 指令
+### 1. 非阻塞传输指令
 
 **旧设计：**
 - `DMA_LOAD` 和 `DMA_STORE` 是阻塞指令
@@ -14,11 +14,11 @@
 - DMA 和计算无法重叠
 
 **新设计：**
-- `DMA_LOAD` (0x8) 和 `DMA_STORE` (0x9) 变为非阻塞指令
-- 指令立即返回，DMA 在后台执行
+- `DMA_LOAD` (0x8) 和 `DMA_STORE` (0x9) 入队到 MTE2，由 MTE2 后台执行 L2↔UB
+- `LOAD` (0x2) 在 MTE1 空闲时启动 UB→L1 staging→L0A/L0B，然后继续取指
 - 新增 `DMA_WAIT` (0xA) 指令显式等待所有 DMA 完成
 
-### 2. DMA 请求队列
+### 2. MTE2 DMA 请求队列
 
 **实现细节：**
 ```scala
@@ -26,14 +26,14 @@
 val dmaQueueDepth = 4
 val dmaQueue = RegInit(VecInit.fill(dmaQueueDepth)(0.U.asTypeOf(new Bundle {
   val isStore = Bool()
-  val hbmAddr = UInt(AscendParams.HBMAddrW.W)
+  val l2Addr  = UInt(AscendParams.L2AddrW.W)
   val ubAddr  = UInt(AscendParams.UBAddrW.W)
 })))
 ```
 
 **特性：**
 - 深度为 4 的 FIFO 队列
-- 支持多个 DMA 请求并发飞行
+- 支持多个 DMA 请求挂起，MTE2 按队列顺序执行
 - Head/Tail 指针管理入队/出队
 - `dmaQueueFull` 和 `dmaQueueEmpty` 信号
 
@@ -46,44 +46,43 @@ val dmaQueue = RegInit(VecInit.fill(dmaQueueDepth)(0.U.asTypeOf(new Bundle {
 
 **新设计：**
 ```scala
-// ToyAscendTop.scala
-// Port A: Scalar LOAD/STORE (UB ↔ L0)
+// AiCore.scala
+// Port A: MTE1 / MTE3 / AIV 共享本地存储通路
 ub.io.portA.en    := core.io.ubEn
 ub.io.portA.we    := core.io.ubWe
 ub.io.portA.addr  := core.io.ubAddr
 
-// Port B: DMA (L2 ↔ UB)
+// Port B: MTE2 独占 L2 ↔ UB 通路
 ub.io.portB.en    := core.io.ubEnB
 ub.io.portB.we    := core.io.ubWeB
 ub.io.portB.addr  := core.io.ubAddrB
 ```
 
 **优势：**
-- Scalar 和 DMA 可以同时访问 UB
-- 消除了端口仲裁的气泡周期
+- 本地 MTE/AIV 和 MTE2 可以同时访问 UB
+- L2↔UB 传输不阻塞 AIC 侧本地 LOAD/MATMUL
 - 为 overlap 提供硬件基础
 
-### 4. L0 双缓冲架构
+### 4. AIC L0 tile FIFO
 
 **设计：**
 ```scala
-// ScalarUnit.scala
-// L0A: 激活输入缓存（双缓冲）
-val l0aBuf0 = RegInit(VecInit.fill(n, n)(0.S(dw.W)))
-val l0aBuf1 = RegInit(VecInit.fill(n, n)(0.S(dw.W)))
-val l0aActiveSel = RegInit(false.B)  // false -> buf0 活跃, true -> buf1 活跃
+// AicCore.scala
+val l0a = RegInit(VecInit.fill(tileSlots, n, n)(0.S(dw.W)))
+val l0b = RegInit(VecInit.fill(tileSlots, n, n)(0.S(dw.W)))
+val l0c = RegInit(VecInit.fill(n, n)(0.S(aw.W)))
 
-// L0B: 权重输入缓存（双缓冲）
-val l0bBuf0 = RegInit(VecInit.fill(n, n)(0.S(dw.W)))
-val l0bBuf1 = RegInit(VecInit.fill(n, n)(0.S(dw.W)))
-val l0bActiveSel = RegInit(false.B)
+val fillSlot    = RegInit(0.U(slotW.W))
+val computeSlot = RegInit(0.U(slotW.W))
+val l0aReady    = RegInit(VecInit.fill(tileSlots)(false.B))
+val l0bReady    = RegInit(VecInit.fill(tileSlots)(false.B))
 ```
 
 **工作原理：**
-- 每个 L0 buffer (L0A/L0B) 有两个物理缓冲区
-- Active buffer：当前供 CubeUnit 读取
-- Fill buffer：后台由 LOAD 指令写入下一批数据
-- LOAD 完成后自动切换 active/fill buffer
+- MTE1 把 UB 行读入 L1 staging，再写入 AIC 的 L0A/L0B
+- L0A/L0B 每侧有 4 个 tile slot，完整 ACT+WEIGHT ready 后进入可计算队列
+- AIC 从最老的 ready slot 启动 Cube，计算结果进入 L0C
+- MTE3 从 L0C 读回 UB，供后续 MTE2 写回 L2
 
 ## 指令集更新
 
@@ -163,12 +162,13 @@ DMA_WAIT
 - 重叠周期 > 0
 - 接近理论峰值性能
 
-### 模式 3：双缓冲预取（未来扩展）
+### 模式 3：本地 LOAD/MATMUL 重叠
 
 ```scala
-// 使用 L0 双缓冲实现计算 + 预取重叠
-// 当前实现：LOAD 完成后立即切换 buffer
-// 未来优化：在 MATMUL 期间预取下一个 tile 到 fill buffer
+// 当前实现：AIC L0A/L0B tile FIFO 支持本地预取
+LOAD(bufSel=1, mem=nextAct)  // MTE1 后台写入下一个 slot
+LOAD(bufSel=0, mem=nextWei)
+MATMUL                       // AIC 消费已有 ready slot
 ```
 
 ## 性能计数器
@@ -178,7 +178,7 @@ DMA_WAIT
 ```scala
 class PerfCounters extends Bundle {
   // ... 现有字段 ...
-  val overlapCycles = UInt(32.W)  // DMA 和 Compute 重叠的周期数
+  val overlapCycles = UInt(32.W)  // AIC 和 MTE1/MTE2 重叠的周期数
 }
 ```
 
@@ -186,14 +186,12 @@ class PerfCounters extends Bundle {
 
 ```scala
 // AiCore.scala
-val cubeActive = RegInit(false.B)
-when(scalar.io.cubeStart) { cubeActive := true.B }
-when(cube.io.done)        { cubeActive := false.B }
+val aicActive = RegInit(false.B)
+when(scalar.io.aicStart) { aicActive := true.B }
+when(aic.io.done)        { aicActive := false.B }
 
-val dmaRunning = dmaState =/= sDmaIdle && dmaState =/= sDmaDone
-
-// Overlap cycles: compute and DMA running simultaneously
-when(cubeActive && dmaRunning) {
+when(mte2.io.busy) { perf.dmaTotalCycles := perf.dmaTotalCycles + 1.U }
+when(aicActive && (mte1.io.busy || mte2.io.busy)) {
   perf.overlapCycles := perf.overlapCycles + 1.U
 }
 ```
@@ -215,21 +213,14 @@ when(cubeActive && dmaRunning) {
 
 ```
 === NPU 性能统计 (8×8 矩阵乘法) ===
-总周期数:            187
-Cube 计算周期:        15
+总周期数:            181
 DMA 周期:             72
-重叠周期:              0
-气泡周期:              3
-计算效率:           8.0%
-DMA 占比:           38.5%
-重叠率:             0.0%
-理论峰值利用率:     83.3%
+重叠周期:              22
 ```
 
 **分析：**
-- 该测试使用顺序执行模式（DMA_WAIT 在 MATMUL 之前）
-- 重叠周期为 0 是预期行为
-- DMA 占比 38.5% 说明数据传输是主要瓶颈
+- 基础集成测试已经能观察到 AIC 与 MTE 的局部重叠
+- 更深的 tile 流水线由 Pipeline3Test 和 TripleBufferTest 覆盖
 
 ### 理论性能提升
 
@@ -254,12 +245,12 @@ DMA 占比:           38.5%
 ### 当前限制
 
 1. **UB 地址冲突：**
-   - Scalar LOAD/STORE 和 DMA 必须访问不同的 UB 地址
+   - MTE1/MTE3/AIV 与 MTE2 最好访问不同的 UB 地址区间
    - 需要程序员手动管理地址分配
 
-2. **Buffer 切换时机：**
-   - LOAD 完成后立即切换 active buffer
-   - 无法在 MATMUL 期间预取到 fill buffer
+2. **MTE2 执行宽度：**
+   - DMA 队列可挂起多个请求
+   - 当前 MTE2 一次只执行一个 L2↔UB 请求
 
 3. **队列深度：**
    - DMA 队列深度为 4
@@ -267,9 +258,9 @@ DMA 占比:           38.5%
 
 ### 未来优化
 
-1. **智能 Buffer 切换：**
-   - 在 MATMUL 开始时切换 buffer
-   - 允许在计算期间预取下一个 tile
+1. **更真实的 bank/冲突模型：**
+   - 为 UB/L0/L1 staging 增加 bank 和端口冲突
+   - 用 bank conflict 影响实际吞吐
 
 2. **自动地址管理：**
    - 硬件自动检测地址冲突

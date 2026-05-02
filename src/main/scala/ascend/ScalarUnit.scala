@@ -12,20 +12,25 @@ object Opcode {
   val MATMUL    = 0x4.U(4.W)
   val VECADD    = 0x5.U(4.W)
   val RELU      = 0x6.U(4.W)
-  val DMA_LOAD  = 0x8.U(4.W)  // HBM → UB (non-blocking)
-  val DMA_STORE = 0x9.U(4.W)  // UB → HBM (non-blocking)
-  val DMA_WAIT  = 0xA.U(4.W)  // Wait for all in-flight DMAs
+  val DMA_LOAD  = 0x8.U(4.W)
+  val DMA_STORE = 0x9.U(4.W)
+  val DMA_WAIT  = 0xA.U(4.W)
 }
 
-/** Buffer select for LOAD/STORE. */
+/** Buffer select for LOAD/STORE. Existing encodings are preserved. */
 object BufSel {
-  val L0_A = 0.U(2.W) // weight
-  val L0_B = 1.U(2.W) // activation
-  val L0_C = 2.U(2.W) // result
+  val L0_A = 0.U(2.W)
+  val L0_B = 1.U(2.W)
+  val L0_C = 2.U(2.W)
   val VEC  = 3.U(2.W)
 }
 
-/** Scalar Unit: instruction fetch, decode, and execution control FSM. */
+/** Scalar Unit: instruction fetch, decode, and command dispatch.
+  *
+  * The scalar pipeline no longer owns Cube/Vector local data. It issues
+  * commands to the decoupled AIC, AIV, and MTE engines and waits on their
+  * completion when the ISA requires blocking behavior.
+  */
 class ScalarUnit(
     n:  Int = AscendParams.ArraySize,
     dw: Int = AscendParams.DataWidth,
@@ -34,174 +39,119 @@ class ScalarUnit(
   val io = IO(new Bundle {
     val start  = Input(Bool())
     val halted = Output(Bool())
-    // Instruction memory
+
     val imemAddr = Output(UInt(8.W))
     val imemData = Input(UInt(AscendParams.InstrWidth.W))
-    // Unified Buffer
-    val ubEn    = Output(Bool())
-    val ubWe    = Output(Bool())
-    val ubAddr  = Output(UInt(AscendParams.UBAddrW.W))
-    val ubWdata = Output(Vec(n, SInt(aw.W)))
-    val ubRdata = Input(Vec(n, SInt(aw.W)))
-    // Cube Unit
-    val cubeStart  = Output(Bool())
-    val cubeDone   = Input(Bool())
-    val cubeWeight = Output(Vec(n, Vec(n, SInt(dw.W))))
-    val cubeAct    = Output(Vec(n, Vec(n, SInt(dw.W))))
-    val cubeResult = Input(Vec(n, Vec(n, SInt(aw.W))))
-    // Vector Unit
-    val vecStart = Output(Bool())
-    val vecDone  = Input(Bool())
-    val vecOp    = Output(UInt(2.W))
-    val vecSrc1  = Output(Vec(n, SInt(aw.W)))
-    val vecSrc2  = Output(Vec(n, SInt(aw.W)))
-    val vecDst   = Input(Vec(n, SInt(aw.W)))
-    // DMA Engine (queue-based interface for non-blocking issue)
+
+    val mte1Start = Output(Bool())
+    val mte1Busy  = Input(Bool())
+    val mte1Done  = Input(Bool())
+    val mte1DstSel = Output(UInt(2.W))
+    val mte1UbAddr = Output(UInt(AscendParams.UBAddrW.W))
+
+    val mte3Start = Output(Bool())
+    val mte3Done  = Input(Bool())
+    val mte3UbAddr = Output(UInt(AscendParams.UBAddrW.W))
+
+    val aicStart = Output(Bool())
+    val aicDone  = Input(Bool())
+
+    val aivStart = Output(Bool())
+    val aivDone  = Input(Bool())
+    val aivOp    = Output(UInt(2.W))
+    val aivSrc1Addr = Output(UInt(AscendParams.UBAddrW.W))
+    val aivSrc2Addr = Output(UInt(AscendParams.UBAddrW.W))
+
     val dmaQueueEnq    = Output(Bool())
     val dmaQueueFull   = Input(Bool())
     val dmaQueueEmpty  = Input(Bool())
     val dmaEnqIsStore  = Output(Bool())
-    val dmaEnqHbmAddr  = Output(UInt(AscendParams.HBMAddrW.W))
+    val dmaEnqL2Addr   = Output(UInt(AscendParams.L2AddrW.W))
     val dmaEnqUbAddr   = Output(UInt(AscendParams.UBAddrW.W))
-    // Debug / perf counter outputs (pure observation)
+
     val dbgState = Output(UInt(4.W))
     val dbgOpLat = Output(UInt(4.W))
   })
 
-  // FSM states
-  // scalafmt: { maxColumn = 120 }
-  val sIdle :: sFetch :: sDecode :: sLoad0 :: sLoad1 :: sLoad2 :: sStore0 :: sStore1 :: sMatmul :: sVec :: sDmaWait :: sHalted :: Nil = Enum(12)
+  // Keep enum ordering stable for existing performance-counter logic:
+  // sDecode=2, sMatmul=8, sVec=9, sDmaWait=10.
+  val sIdle :: sFetch :: sDecode :: sLoad0 :: sLoad1 :: sLoad2 :: sStore0 :: sStore1 :: sMatmul :: sVec :: sDmaWait :: sHalted :: Nil =
+    Enum(12)
 
   val state = RegInit(sIdle)
   val pc    = RegInit(0.U(8.W))
 
-  // Latched instruction fields
   val opLat      = RegInit(0.U(4.W))
   val dstSelLat  = RegInit(0.U(2.W))
-  val memAddrLat = RegInit(0.U(16.W))
-  val vecSrc1Lat = RegInit(0.U(6.W))
-  val vecSrc2Lat = RegInit(0.U(6.W))
-  val dmaUbLat   = RegInit(0.U(8.W))  // [27:20] for DMA ub_base
-  val rowCnt    = RegInit(0.U(4.W))
+  val memAddrLat = RegInit(0.U(AscendParams.UBAddrW.W))
+  val vecSrc1Lat = RegInit(0.U(AscendParams.UBAddrW.W))
+  val vecSrc2Lat = RegInit(0.U(AscendParams.UBAddrW.W))
 
-  val rowIdx = rowCnt(2, 0) // 扩展到 3 bits for Vec(8)
-
-  // === L0A/L0B/L0C 分离存储（新架构）===
-  // L0A / L0B 采用硬件双缓冲（ping-pong buffer）
-  //   - active buffer: 当前供 CubeUnit 读取
-  //   - fill buffer:   后台由 LOAD 指令写入下一批数据
-  // 这样在未来扩展控制逻辑后，可以支持“当前块计算 + 下一块预取”重叠。
-
-  // L0A: 激活输入缓存（双缓冲）
-  val l0aBuf0 = RegInit(VecInit.fill(n, n)(0.S(dw.W)))
-  val l0aBuf1 = RegInit(VecInit.fill(n, n)(0.S(dw.W)))
-  val l0aActiveSel = RegInit(false.B) // false -> buf0 活跃, true -> buf1 活跃
-
-  // L0B: 权重输入缓存（双缓冲）
-  val l0bBuf0 = RegInit(VecInit.fill(n, n)(0.S(dw.W)))
-  val l0bBuf1 = RegInit(VecInit.fill(n, n)(0.S(dw.W)))
-  val l0bActiveSel = RegInit(false.B) // false -> buf0 活跃, true -> buf1 活跃
-
-  // L0C: 输出缓存，存储 N 行结果矩阵（32-bit 累加器）
-  val l0c = RegInit(VecInit.fill(n, n)(0.S(aw.W)))
-
-  // === 三级流水线：Fill buffer 就绪标志 ===
-  // 当 LOAD 完成时设置，MATMUL 开始时清除并切换 buffer
-  val l0aFillReady = RegInit(false.B)
-  val l0bFillReady = RegInit(false.B)
-
-  // 当前供 Cube 使用的 active buffer
-  val l0aActive = Wire(Vec(n, Vec(n, SInt(dw.W))))
-  val l0bActive = Wire(Vec(n, Vec(n, SInt(dw.W))))
-  l0aActive := Mux(l0aActiveSel, l0aBuf1, l0aBuf0)
-  l0bActive := Mux(l0bActiveSel, l0bBuf1, l0bBuf0)
-
-  // 向后兼容：保留旧命名，指向当前活跃缓冲区
-  val weightBuf = l0bActive
-  val actBuf    = l0aActive
-
-  // Decode fields from instruction word
-  val instr   = io.imemData
-  val op      = instr(31, 28)
-  val dstSel  = instr(27, 26)
+  val instr = io.imemData
+  val op = instr(31, 28)
+  val dstSel = instr(27, 26)
   val memAddr = instr(19, 4)
   val vecSrc1Addr = instr(27, 22)
   val vecSrc2Addr = instr(21, 16)
+  val dmaUbBase = instr(27, 20)
+  val dmaL2Base = instr(19, 4)
 
   io.imemAddr := pc
-  io.halted   := state === sHalted
-
-  // Debug outputs
+  io.halted := state === sHalted
   io.dbgState := state.asUInt
   io.dbgOpLat := opLat
 
-  // Default outputs
-  val ubEn    = WireDefault(false.B)
-  val ubWe    = WireDefault(false.B)
-  val ubAddr  = WireDefault(0.U(AscendParams.UBAddrW.W))
-  val ubWdata = WireDefault(VecInit.fill(n)(0.S(aw.W)))
+  io.mte1Start := false.B
+  io.mte1DstSel := dstSelLat
+  io.mte1UbAddr := memAddrLat
 
-  io.ubEn    := ubEn
-  io.ubWe    := ubWe
-  io.ubAddr  := ubAddr
-  io.ubWdata := ubWdata
+  io.mte3Start := false.B
+  io.mte3UbAddr := memAddrLat
 
-  io.cubeStart  := false.B
-  // Cube 只读取当前 active buffer；LOAD 总是写入 inactive buffer
-  io.cubeWeight := weightBuf
-  io.cubeAct    := actBuf
+  io.aicStart := false.B
 
-  io.vecStart := false.B
-  io.vecOp    := 0.U
-  io.vecSrc1  := VecInit.fill(n)(0.S(aw.W))
-  io.vecSrc2  := VecInit.fill(n)(0.S(aw.W))
+  io.aivStart := false.B
+  io.aivOp := Mux(opLat === Opcode.RELU, 1.U, 0.U)
+  io.aivSrc1Addr := vecSrc1Lat
+  io.aivSrc2Addr := vecSrc2Lat
 
-  // DMA queue interface (default: no enqueue)
-  io.dmaQueueEnq   := false.B
+  io.dmaQueueEnq := false.B
   io.dmaEnqIsStore := false.B
-  io.dmaEnqHbmAddr := 0.U
-  io.dmaEnqUbAddr  := 0.U
-
-  // DMA decode fields: [27:20] ub_base, [19:4] hbm_base
-  val dmaUbBase  = instr(27, 20)
-  val dmaHbmBase = instr(19, 4)
+  io.dmaEnqL2Addr := 0.U
+  io.dmaEnqUbAddr := 0.U
 
   switch(state) {
     is(sIdle) {
       when(io.start) {
-        pc    := 0.U
+        pc := 0.U
         state := sFetch
       }
     }
 
     is(sFetch) {
-      // imemAddr = pc, data available combinationally
       state := sDecode
     }
 
     is(sDecode) {
-      opLat      := op
-      dstSelLat  := dstSel
+      opLat := op
+      dstSelLat := dstSel
       memAddrLat := memAddr
       vecSrc1Lat := vecSrc1Addr
       vecSrc2Lat := vecSrc2Addr
-      dmaUbLat   := instr(27, 20)  // [27:20] for DMA ub_base
 
       switch(op) {
         is(Opcode.NOP) {
-          pc    := pc + 1.U
+          pc := pc + 1.U
           state := sFetch
         }
         is(Opcode.HALT) {
           state := sHalted
         }
         is(Opcode.LOAD) {
-          rowCnt := 0.U
-          state  := sLoad0
+          state := sLoad0
         }
         is(Opcode.STORE) {
-          rowCnt := 0.U
-          state  := sStore0
+          state := sStore0
         }
         is(Opcode.MATMUL) {
           state := sMatmul
@@ -210,15 +160,14 @@ class ScalarUnit(
           state := sVec
         }
         is(Opcode.DMA_LOAD, Opcode.DMA_STORE) {
-          // Non-blocking DMA issue: enqueue request and continue
           when(!io.dmaQueueFull) {
-            io.dmaQueueEnq   := true.B
+            io.dmaQueueEnq := true.B
             io.dmaEnqIsStore := op === Opcode.DMA_STORE
-            io.dmaEnqHbmAddr := dmaHbmBase
-            io.dmaEnqUbAddr  := dmaUbBase
-            pc    := pc + 1.U
+            io.dmaEnqL2Addr := dmaL2Base
+            io.dmaEnqUbAddr := dmaUbBase
+            pc := pc + 1.U
             state := sFetch
-          } // else: wait for queue space (stay in sDecode)
+          }
         }
         is(Opcode.DMA_WAIT) {
           state := sDmaWait
@@ -226,128 +175,63 @@ class ScalarUnit(
       }
     }
 
-    // LOAD: read N rows from UB into weight/act buffer
     is(sLoad0) {
-      ubEn   := true.B
-      ubAddr := memAddrLat + rowCnt
-      state  := sLoad1
+      when(!io.mte1Busy) {
+        io.mte1Start := true.B
+        io.mte1DstSel := dstSelLat
+        io.mte1UbAddr := memAddrLat
+        pc := pc + 1.U
+        state := sFetch
+      }
     }
     is(sLoad1) {
-      // Keep addr stable for SyncReadMem read latency
-      ubAddr := memAddrLat + rowCnt
-      state := sLoad2
+      when(io.mte1Done) {
+        pc := pc + 1.U
+        state := sFetch
+      }
     }
     is(sLoad2) {
-      // Store UB data into inactive buffer（硬件双缓冲）
-      when(dstSelLat === BufSel.L0_A) {
-        // LOAD 到 L0B 的非活跃缓冲区（权重）
-        when(l0bActiveSel) {
-          for (j <- 0 until n) {
-            l0bBuf0(rowIdx)(j) := io.ubRdata(j)(dw - 1, 0).asSInt
-          }
-        }.otherwise {
-          for (j <- 0 until n) {
-            l0bBuf1(rowIdx)(j) := io.ubRdata(j)(dw - 1, 0).asSInt
-          }
-        }
-      }.elsewhen(dstSelLat === BufSel.L0_B) {
-        // LOAD 到 L0A 的非活跃缓冲区（激活）
-        when(l0aActiveSel) {
-          for (j <- 0 until n) {
-            l0aBuf0(rowIdx)(j) := io.ubRdata(j)(dw - 1, 0).asSInt
-          }
-        }.otherwise {
-          for (j <- 0 until n) {
-            l0aBuf1(rowIdx)(j) := io.ubRdata(j)(dw - 1, 0).asSInt
-          }
-        }
-      }
-
-      when(rowCnt === (n - 1).U) {
-        // 三级流水线：标记 fill buffer 就绪，延迟到 MATMUL 开始时切换
-        when(dstSelLat === BufSel.L0_A) {
-          l0bFillReady := true.B
-        }.elsewhen(dstSelLat === BufSel.L0_B) {
-          l0aFillReady := true.B
-        }
-        pc    := pc + 1.U
-        state := sFetch
-      }.otherwise {
-        rowCnt := rowCnt + 1.U
-        state  := sLoad0
-      }
+      state := sFetch
     }
 
-    // STORE: write N rows from cube result to UB
     is(sStore0) {
-      ubEn   := true.B
-      ubWe   := true.B
-      ubAddr := memAddrLat + rowCnt
-      for (j <- 0 until n) {
-        ubWdata(j) := io.cubeResult(rowIdx)(j)
-      }
+      io.mte3Start := true.B
+      io.mte3UbAddr := memAddrLat
       state := sStore1
     }
     is(sStore1) {
-      when(rowCnt === (n - 1).U) {
-        pc    := pc + 1.U
+      when(io.mte3Done) {
+        pc := pc + 1.U
         state := sFetch
-      }.otherwise {
-        rowCnt := rowCnt + 1.U
-        state  := sStore0
       }
     }
 
-    // MATMUL
     is(sMatmul) {
-      // 三级流水线：MATMUL 开始时切换 buffer（如果 fill buffer 就绪）
-      when(l0aFillReady) {
-        l0aActiveSel := !l0aActiveSel
-        l0aFillReady := false.B
-      }
-      when(l0bFillReady) {
-        l0bActiveSel := !l0bActiveSel
-        l0bFillReady := false.B
-      }
-
-      io.cubeStart := true.B
-      when(io.cubeDone) {
-        io.cubeStart := false.B
-        pc    := pc + 1.U
+      io.aicStart := true.B
+      when(io.aicDone) {
+        pc := pc + 1.U
         state := sFetch
       }
     }
 
-    // VECADD / RELU: 从 L0C 读取，结果写回 L0C
     is(sVec) {
-      io.vecOp := Mux(opLat === Opcode.RELU, 1.U, 0.U)
-      for (j <- 0 until n) {
-        io.vecSrc1(j) := l0c(vecSrc1Lat(2, 0))(j)
-        io.vecSrc2(j) := l0c(vecSrc2Lat(2, 0))(j)
-      }
-      io.vecStart := true.B
-      when(io.vecDone) {
-        // 将 VectorUnit 的结果写回 L0C
-        for (j <- 0 until n) {
-          l0c(vecSrc1Lat(2, 0))(j) := io.vecDst(j)
-        }
-        io.vecStart := false.B
-        pc    := pc + 1.U
+      io.aivStart := true.B
+      io.aivOp := Mux(opLat === Opcode.RELU, 1.U, 0.U)
+      io.aivSrc1Addr := vecSrc1Lat
+      io.aivSrc2Addr := vecSrc2Lat
+      when(io.aivDone) {
+        pc := pc + 1.U
         state := sFetch
       }
     }
 
-    // DMA_WAIT: wait for all in-flight DMAs to complete
     is(sDmaWait) {
       when(io.dmaQueueEmpty) {
-        pc    := pc + 1.U
+        pc := pc + 1.U
         state := sFetch
       }
-      // else: keep waiting
     }
 
-    is(sHalted) {
-      // Stay halted
-    }
+    is(sHalted) {}
   }
 }

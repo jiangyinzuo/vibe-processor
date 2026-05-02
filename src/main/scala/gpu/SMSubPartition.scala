@@ -26,7 +26,7 @@ class SMSubPartition(
     val warpState = Input(Vec(localWarps, WarpState()))
     val warpStarted = Input(Vec(localWarps, Bool()))
 
-    val selectedWarp = Output(Valid(UInt(log2Ceil(numWarps).W)))
+    val selectedWarp = Output(Vec(localWarps, Valid(UInt(log2Ceil(numWarps).W))))
     val grant = Output(Vec(localWarps, Bool()))
 
     val coreValid = Input(Vec(warpWidth, Bool()))
@@ -36,6 +36,12 @@ class SMSubPartition(
     val coreRs3 = Input(Vec(warpWidth, SInt(dw.W)))
     val coreDone = Output(Vec(warpWidth, Bool()))
     val coreRd = Output(Vec(warpWidth, SInt(dw.W)))
+
+    val sfuValid = Input(Vec(warpWidth, Bool()))
+    val sfuOp = Input(Vec(warpWidth, UInt(4.W)))
+    val sfuRs1 = Input(Vec(warpWidth, SInt(dw.W)))
+    val sfuDone = Output(Vec(warpWidth, Bool()))
+    val sfuRd = Output(Vec(warpWidth, SInt(dw.W)))
   })
 
   val scheduler = Module(new WarpScheduler(localWarps))
@@ -49,34 +55,34 @@ class SMSubPartition(
   }
   io.grant := scheduler.io.grant
 
-  io.selectedWarp.valid := false.B
-  io.selectedWarp.bits := 0.U
-  for (w <- 0 until localWarps) {
-    val globalWarpId = partitionId * localWarps + w
-    when(!io.issueBlocked && scheduler.io.grant(w) && io.warpStarted(w)) {
-      io.selectedWarp.valid := true.B
-      io.selectedWarp.bits := globalWarpId.U
-    }
+  val localWarpW = math.max(1, log2Ceil(localWarps))
+  val ready = VecInit((0 until localWarps).map { w =>
+    io.warpStarted(w) &&
+      io.warpState(w) =/= WarpState.Halted &&
+      io.warpState(w) =/= WarpState.Stalled
+  })
+  val grantIdx = OHToUInt(scheduler.io.grant)
+
+  for (c <- 0 until localWarps) {
+    val localIdx = ((grantIdx + c.U) % localWarps.U)(localWarpW - 1, 0)
+    io.selectedWarp(c).valid := !io.issueBlocked && ready(localIdx)
+    io.selectedWarp(c).bits := (partitionId * localWarps).U(log2Ceil(numWarps).W) + localIdx
   }
 
-  val isExpInstrVec = Wire(Vec(warpWidth, Bool()))
-  val isExpInstrRegVec = RegNext(isExpInstrVec)
-
   for (lane <- 0 until warpWidth) {
-    val isExpInstr = io.coreOp(lane) === GpuOpcode.EXP
-    isExpInstrVec(lane) := isExpInstr
-
-    cudaCores(lane).io.valid := io.coreValid(lane) && !isExpInstr
+    cudaCores(lane).io.valid := io.coreValid(lane)
     cudaCores(lane).io.op := io.coreOp(lane)
     cudaCores(lane).io.rs1 := io.coreRs1(lane)
     cudaCores(lane).io.rs2 := io.coreRs2(lane)
     cudaCores(lane).io.rs3 := io.coreRs3(lane)
 
-    sfus(lane).io.valid := io.coreValid(lane) && isExpInstr
-    sfus(lane).io.op := io.coreOp(lane)
-    sfus(lane).io.x := io.coreRs1(lane)
+    sfus(lane).io.valid := io.sfuValid(lane)
+    sfus(lane).io.op := io.sfuOp(lane)
+    sfus(lane).io.x := io.sfuRs1(lane)
 
-    io.coreDone(lane) := Mux(isExpInstrRegVec(lane), sfus(lane).io.done, cudaCores(lane).io.done)
-    io.coreRd(lane) := Mux(isExpInstrRegVec(lane), sfus(lane).io.result, cudaCores(lane).io.rd)
+    io.coreDone(lane) := cudaCores(lane).io.done
+    io.coreRd(lane) := cudaCores(lane).io.rd
+    io.sfuDone(lane) := sfus(lane).io.done
+    io.sfuRd(lane) := sfus(lane).io.result
   }
 }

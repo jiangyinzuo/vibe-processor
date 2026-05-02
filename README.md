@@ -266,10 +266,10 @@ vibe-processor/
 ### NPU (昇腾风格)
 
 - ✅ **8×8 收缩阵列** - 矩阵乘法加速
-- ✅ **向量单元** - VECADD, RELU 等操作
-- ✅ **DMA 引擎** - 非阻塞 DMA，支持 Overlap
-- ✅ **多核并行** - 4 个 AiCore，独立执行
-- ✅ **存储层次** - L0/UB/L2/HBM 四级存储
+- ✅ **AIC/AIV 解耦** - Cube 与 Vector 走独立执行核心
+- ✅ **MTE 多通路** - MTE1/MTE2/MTE3 分别覆盖 UB→L0、L2↔UB、L0C→UB
+- ✅ **多核并行** - 2 个 AiCore，独立执行
+- ✅ **真实 Local Memory 层次** - UB、L1 staging、L0A/L0B/L0C 分层建模
 - ✅ **性能计数器** - 精确的性能统计
 
 ### GPU (英伟达风格)
@@ -288,8 +288,9 @@ vibe-processor/
 **实现：**
 - 非阻塞 DMA 指令（DMA_LOAD/DMA_STORE/DMA_WAIT）
 - DMA 请求队列（深度 4）
-- UB 双端口分离（Scalar + DMA）
-- L0 双缓冲架构
+- UB 双端口分离（本地 MTE/AIV + MTE2）
+- AIC 侧 L0A/L0B tile FIFO，支持 LOAD/MATMUL 重叠
+- MTE1/MTE2/MTE3 多通路传输
 
 **效果：**
 - 实际加速比：**1.22×**
@@ -312,14 +313,14 @@ vibe-processor/
 ## 🧪 测试覆盖
 
 ```
-总测试数：     37 个
-通过：         37 个 ✅
+总测试数：     48 个
+通过：         48 个 ✅
 通过率：       100% 🎉
 ```
 
-**NPU 测试 (21)：** IntegrationTest, PerfCounterTest, OverlapBenchmark, CubeUnitTest, SystolicArrayTest, VectorUnitTest, MultiCoreTest 等
+**NPU 测试 (23)：** IntegrationTest, Pipeline3Test, TripleBufferTest, PerfCounterTest, OverlapBenchmark, CubeUnitTest, SystolicArrayTest, VectorUnitTest, MultiCoreTest 等
 
-**GPU 测试 (16)：** GpuIntegrationTest, DualSchedulerTest, SharedArchDebug, QuickSharedArchTest, CudaCoreTest 等
+**GPU 测试 (25)：** GpuIntegrationTest, DualSchedulerTest, SharedArchDebug, InstructionDispatcherMultiIssueTest, QuickSharedArchTest, CudaCoreTest 等
 
 ## 🔬 学习价值
 
