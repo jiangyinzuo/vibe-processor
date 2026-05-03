@@ -35,25 +35,25 @@ SM
 
 | 指标 | 数值 |
 |---|---:|
-| total cycles | 110 |
-| live warp cycles | 331 |
-| eligible warp cycles | 126 |
-| stalled warp cycles | 205 |
-| no-eligible cycles | 22 |
+| total cycles | 104 |
+| live warp cycles | 318 |
+| eligible warp cycles | 131 |
+| stalled warp cycles | 187 |
+| no-eligible cycles | 11 |
 | MEM issue cycles | 12 |
 
-4 个 warp 共发出 `2 x LD + 1 x ST`，因此 `MEM issue cycles = 12`。`stalledWarpCycles=205` 同时包含 HBM Controller 的 row/bank 等待和 queue backpressure，`noEligibleCycles=22` 表示仍有 22 个周期没有 ready warp 可发射。
+4 个 warp 共发出 `2 x LD + 1 x ST`，因此 `MEM issue cycles = 12`。`stalledWarpCycles=187` 同时包含 4-stack HBM 子系统的 row/bank 等待和 queue backpressure，`noEligibleCycles=11` 表示仍有 11 个周期没有 ready warp 可发射。
 
 ### 混合程序，`gmemLatency=5`
 
 | 指标 | 数值 |
 |---|---:|
-| total cycles | 77 |
-| live warp cycles | 276 |
-| eligible warp cycles | 226 |
-| stalled warp cycles | 50 |
+| total cycles | 79 |
+| live warp cycles | 282 |
+| eligible warp cycles | 224 |
+| stalled warp cycles | 58 |
 | no-eligible cycles | 0 |
-| ALU issue cycles | 17 |
+| ALU issue cycles | 20 |
 | MEM issue cycles | 8 |
 
 该用例计算密度更高，访存等待没有形成完整的 no-eligible 前端气泡。

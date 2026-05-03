@@ -7,8 +7,9 @@ ToyAscendTop
   ├── AiCpu
   ├── InstrMem
   ├── L2 Buffer
-  ├── HBM Controller
-  ├── HBM Model（仿真用）
+  ├── HBM Stack[0..3]
+  │     ├── HBM Controller
+  │     └── HBM Model（仿真用）
   ├── AiCore 0 + private UB
   └── AiCore 1 + private UB
 ```
@@ -127,17 +128,18 @@ L2 -> MTE2 -> UB -> MTE1 -> Cube input FIFO -> Cube -> L0C -> MTE3 -> UB -> MTE2
 
 | 层级 | 当前实现 | 容量/形状 | 共享范围 |
 |---|---|---:|---|
-| HBM Controller | `HbmController` | 请求/响应边界 + 简化 row/bank 时序 | 顶层全局 |
-| HBM Model | `HbmModel` 内部包裹 `LatencyMem` | 4096 行，1 cycle storage backend | 仿真外部存储 |
+| HBM 子系统 | `HbmStackedMemory` | 4 个 stack，每 stack 1 个 `HbmController + HbmModel` | 顶层全局 |
+| HBM Controller | `HbmController` | 请求/响应边界 + 简化 row/bank 时序 | stack 内 |
+| HBM Model | `HbmModel` 内部包裹 `LatencyMem` | 每 stack 1024 行，1 cycle storage backend | stack 内存储 |
 | L2 Buffer | `Mem` | 2048 行 | 多 AiCore 共享 |
 | UB | `UnifiedBuffer` | 每核 256 行 | AiCore 私有 |
 | L0 activation FIFO | `CubeCore.l0a` | 4 个 16x16 tile slot | CubeCore 私有 |
 | L0 weight FIFO | `CubeCore.l0b` | 4 个 16x16 tile slot | CubeCore 私有 |
 | L0C | `CubeCore` 内部寄存器 | 1 个 16x16 tile | CubeCore 私有 |
 
-L2 带有外部 preload/readback 端口，服务测试。HBM 路径现在拆成 `HbmController` 和 `HbmModel`：controller 表示计算 die 侧的控制器边界，model 表示仿真环境中的外部 HBM stack。当前 AiCore 实际执行路径只访问 L2，不直接访问 HBM；`ToyAscendTop` 里 `HbmController` 的 core-facing request 口仍置为空闲。
+L2 带有外部 preload/readback 端口，服务测试。HBM 路径现在拆成 `HbmStackedMemory`、`HbmController` 和 `HbmModel`：stacked 子系统负责地址交织和多 stack 组织，controller 表示每个 stack 的控制器边界，model 表示每个 stack 的仿真存储。当前 AiCore 实际执行路径只访问 L2，不直接访问 HBM；`ToyAscendTop` 里 HBM 子系统的 core-facing request 口仍置为空闲。
 
-真实 HBM 不是单一线性存储体，而是由 stack、channel/pseudo-channel、bank/bank group 和 row buffer 组成的多层 DRAM 系统。当前 `HbmController` 只实现了简化的 row/bank 时序和队列；真实 HBM Controller 还需要进行地址映射、请求调度、读写切换、刷新、QoS 和 ECC 处理。详见 [HBM 真实结构与控制器职责](../hbm_architecture.md)。
+真实 HBM 不是单一线性存储体，而是由 stack、channel/pseudo-channel、bank/bank group 和 row buffer 组成的多层 DRAM 系统。当前 `HbmStackedMemory` 已经把 stack 这一层显式拆出来；每个 `HbmController` 只实现 stack 内部的简化 row/bank 时序和队列。真实 HBM Controller 还需要进一步处理地址映射、请求调度、读写切换、刷新、QoS 和 ECC。详见 [HBM 真实结构与控制器职责](../hbm_architecture.md)。
 
 UB 有两个端口：
 
@@ -209,7 +211,7 @@ UB 有两个端口：
 
 - 只支持 1D `blockIdx`，没有 2D/3D grid。
 - `GetBlockIdx()` 没有作为 scalar 指令或寄存器暴露。
-- HBM Controller 尚未接入真实 GM 到 L2 的运行时搬运路径；`HbmModel` 仅用于仿真 preload/readback。
+- HBM 子系统尚未接入真实 GM 到 L2 的运行时搬运路径；`HbmModel` 仅用于仿真 preload/readback。
 - L2、UB、L0 没有建模 bank conflict、NoC、cache coherence 或复杂 arbitration。
 - MTE 队列是简单 FIFO，没有 stream、barrier、重排序和真实格式转换。
 - AI CPU 只是 L2 row task engine，不是完整 CPU。

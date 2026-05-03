@@ -6,14 +6,14 @@
 
 | 项目 | 内容 |
 |---|---|
-| 代码基准 commit | `5c1aa910219a0f3d17f23712690ce68f54393a62` |
-| 短 commit | `5c1aa91` |
-| commit 时间 | `2026-05-03 14:56:32 +0800` |
-| commit 说明 | `Implement NPU dataflow task queues and token waits` |
+| 代码基准 commit | `55bfefa`（当前工作区基线，含未提交 HBM stack 改动） |
+| 短 commit | `55bfefa` |
+| commit 时间 | `2026-05-03 23:03:29 +0800` |
+| commit 说明 | `Model HBM controller timing and routing` |
 | 主要测试命令 | `sbt "testOnly ascend.IntegrationTest ascend.LargeMatmulTest gpu.GpuIntegrationTest"` |
 | 补充测试命令 | `sbt "testOnly ascend.Pipeline3Test ascend.TripleBufferTest ascend.OverlapBenchmark"` |
 
-测试结果：上述两组命令均通过。第一组运行 9 个测试，第二组运行 4 个测试。
+测试结果：上述两组命令均通过。第一组运行 9 个测试，第二组运行 4 个测试。表内 GPU 侧数字来自当前工作区的 4-stack HBM 实现。
 
 需要特别说明：当前 NPU 模型已经实现 16x16 Cube tile、MTE task queue 和 token wait；当前 GPU 模型主要用于观察 SIMT/warp 调度和访存延迟隐藏，尚未实现 Tensor Core，也没有完整的 GPU 矩阵乘 kernel。因此，本文不能把 NPU 的矩阵乘周期与 GPU 的向量加法周期直接解释为真实硬件的矩阵性能排名。
 
@@ -24,7 +24,7 @@
 | 主要目标 | 16x16 tile 矩阵乘与显式数据流 | SIMT warp 调度与访存延迟隐藏 |
 | 计算单元 | 16x16 SystolicArray，256 个 PE | 4 个 SM，每个 warp 4 个线程 |
 | 专用矩阵单元 | Cube 路径已建模 | 未建模 Tensor Core |
-| 数据搬运 | MTE1 CopyIn、MTE2 DMA、MTE3 CopyOut | HBM Controller + HBM Model、SharedMem、RegFile |
+| 数据搬运 | MTE1 CopyIn、MTE2 DMA、MTE3 CopyOut | HBM Stack 子系统、SharedMem、RegFile |
 | 同步机制 | `WAIT_ALL` / `WAIT_DMA` / `WAIT_COPY_IN` / `WAIT_COPY_OUT` | warp ready/stall 调度 |
 | 主要观察指标 | tile 周期、MTE/Cube 重叠、等待气泡 | live/eligible/stalled warp-cycle |
 
@@ -111,35 +111,35 @@ ST [base + 2], R2
 HALT
 ```
 
-以下表格报告 `gpu.GpuIntegrationTest` 中 4-SM VADD 最后完成的 SM 计数。由于所有 SM 共享一个 HBM Controller，总周期包含控制器仲裁、bank/row 时序和排队。
+以下表格报告 `gpu.GpuIntegrationTest` 中 4-SM VADD 最后完成的 SM 计数。由于所有 SM 共享一个 4-stack HBM 子系统，总周期包含 stack 交织、控制器仲裁、bank/row 时序和排队。
 
 ### 5.1 HBM controller row-miss latency = 1
 
 | 指标 | 数值 |
 |---|---:|
-| total cycles | 143 |
-| live warp cycles | 423 |
-| eligible warp cycles | 147 |
-| stalled warp cycles | 276 |
-| no-eligible cycles | 42 |
+| total cycles | 105 |
+| live warp cycles | 312 |
+| eligible warp cycles | 144 |
+| stalled warp cycles | 168 |
+| no-eligible cycles | 12 |
 | ALU issue cycles | 4 |
 | memory issue cycles | 12 |
-| warp 占用率 | 74.0% |
+| warp 占用率 | 74.3% |
 
 ### 5.2 HBM controller row-miss latency = 10
 
 | 指标 | 数值 |
 |---|---:|
-| total cycles | 259 |
-| live warp cycles | 820 |
-| eligible warp cycles | 241 |
-| stalled warp cycles | 579 |
-| no-eligible cycles | 83 |
+| total cycles | 152 |
+| live warp cycles | 509 |
+| eligible warp cycles | 224 |
+| stalled warp cycles | 285 |
+| no-eligible cycles | 13 |
 | ALU issue cycles | 4 |
 | memory issue cycles | 12 |
-| warp 占用率 | 79.1% |
+| warp 占用率 | 83.7% |
 
-访存延迟从 1 增加到 10 后，4-SM 总周期从 143 增加到 259。这个变化不是单个 warp 延迟的简单线性放大，而是 HBM Controller 的 bank/row 时序、请求排队和多个 SM 同时访存共同作用。单 SM 的 `DualSchedulerTest` 中，memory-dense latency=10 用例为 `totalCycles=110`、`stalledWarpCycles=205`、`noEligibleCycles=22`，说明 warp 切换仍能隐藏部分等待，但不能消除 HBM 侧排队。
+访存延迟从 1 增加到 10 后，4-SM 总周期从 105 增加到 152。这个变化不是单个 warp 延迟的简单线性放大，而是 4-stack HBM 交织、stack 内 bank/row 时序、请求排队和多个 SM 同时访存共同作用。单 SM 的 `DualSchedulerTest` 中，memory-dense latency=10 用例为 `totalCycles=104`、`stalledWarpCycles=187`、`noEligibleCycles=11`，说明 warp 切换仍能隐藏部分等待，但不能消除 HBM 侧排队。
 
 ## 6. 矩阵乘场景的可比性
 
@@ -173,7 +173,7 @@ HALT
 
 1. 当前 NPU 模型的优势在于已经具备专用 16x16 Cube tile 和显式数据流机制，但端到端效率仍主要受 MTE2 搬运、CopyIn/CopyOut 和同步边界限制。
 2. task queue 与 token wait 的价值体现在多 tile 场景：流水版 `OverlapBenchmark` 比顺序版减少 206 cycles，平均每 tile 从 346.0 cycles 降到 277.3 cycles。
-3. 当前 GPU 模型同时展示 SIMT 延迟隐藏和 HBM 侧争用：4-SM VADD 在 `gmemLatency=10` 下会被共享 HBM Controller 的 bank/row 时序和排队拉长，单 SM 调度测试仍能看到部分访存等待被 ready warp 覆盖。
+3. 当前 GPU 模型同时展示 SIMT 延迟隐藏和 HBM 侧争用：4-SM VADD 在 `gmemLatency=10` 下仍会被共享 4-stack HBM 子系统的 stack 交织、bank/row 时序和排队拉长，单 SM 调度测试仍能看到部分访存等待被 ready warp 覆盖。
 4. 当前仓库还不能做 Cube Core 与 Tensor Core 的直接性能结论。直接比较需要在同一模型内实现 GPU 矩阵乘或 Tensor Core，并统一数据类型、tile 大小、访存层次和调度策略。
 
 ## 9. 复现实验

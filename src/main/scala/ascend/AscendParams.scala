@@ -21,6 +21,7 @@ object AscendParams {
   // HBM (off-chip)
   val HBMDepth = 4096
   val HBMAddrW = 16
+  val HBMStacks = 4
   val HBMLatency = 10
   // Instruction memory (shared)
   val IMEMDepth = 256

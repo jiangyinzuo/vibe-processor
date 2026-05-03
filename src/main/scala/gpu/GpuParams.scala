@@ -17,6 +17,7 @@ object GpuParams {
   val IMEMDepth = 256
   val GlobalDepth = 4096
   val GlobalAddrW = 16
+  val HBMStacks = 4
   val SharedDepth = 256
   val SharedAddrW = 8
 }

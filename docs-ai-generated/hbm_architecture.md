@@ -56,28 +56,27 @@ HBM Controller 通常需要同时处理以下目标：
 
 ## 4. 本项目的建模边界
 
-当前项目中的 `HbmController` 和 `HbmModel` 是教学简化模型，但已经比“单一线性数组”更接近真实 HBM：
+当前项目中的 HBM 路径是教学简化模型，但已经比“单一线性数组”更接近真实 HBM：
 
-- `HbmController` 表示计算 die 侧的请求/响应边界，并实现简化的 channel/bank/row 解码、row hit / row miss 时序、bank busy backpressure 和小型请求队列。
-- `HbmModel` 负责存储后端，当前仍由 `LatencyMem` 实现。
-- 当前模型仍没有实现真实的多 stack 并行、pseudo-channel 细分、bank group 竞争、刷新、ECC、乱序返回或复杂 QoS。
+- `HbmStackedMemory` 表示多 HBM stack 子系统，默认包含 4 个 stack。
+- 每个 stack 内有一组 `HbmController + HbmModel`。`HbmController` 表示计算 die 侧的请求/响应边界，并实现简化的 channel/bank/row 解码、row hit / row miss 时序、bank busy backpressure 和小型请求队列。
+- 地址低位选择 `stack_id`，去掉 stack 位后的本地地址再进入该 stack 内部的 channel/bank/row 解码。这样连续 line 地址会交织到多个 stack。
+- `HbmModel` 负责每个 stack 的存储后端，当前仍由 `LatencyMem` 实现。
+- 当前模型仍没有实现 pseudo-channel 细分、bank group 竞争、刷新、ECC、乱序返回或复杂 QoS。由于顶层请求接口没有 transaction id，`HbmStackedMemory` 对读响应保持全局请求顺序。
 
-如果后续要提高真实性，可以把 HBM 路径扩展为：
+如果后续要继续提高真实性，可以把 HBM 路径扩展为：
 
 ```text
-HbmController
-  ├── address decoder
-  ├── per-channel request queue
-  ├── per-bank state machine
-  ├── row buffer state
-  └── response reorder / return path
-
-HbmModel
+HbmStackedMemory
   ├── stack[0..S-1]
-  │     └── channel[0..C-1]
-  │           └── bank[0..B-1]
-  │                 ├── activeRow
-  │                 └── storage
+  │     ├── HbmController
+  │     │     ├── address decoder
+  │     │     ├── per-channel request queue
+  │     │     ├── per-bank state machine
+  │     │     └── row buffer state
+  │     └── HbmModel
+  │           └── storage
+  └── ordered response return path
 ```
 
 这种扩展可以让测试观察 channel conflict、bank conflict、row hit/miss、请求排队和多核访存争用，而不只是观察固定延迟。

@@ -111,7 +111,7 @@ regs[0][3][R2] != regs[1][3][R2]
   - SubPartition 0: Scheduler 0 管理 Warp 0, 1，拥有 lane 0..3 执行单元
   - SubPartition 1: Scheduler 1 管理 Warp 2, 3，拥有 lane 4..7 执行单元
   - 每周期可并行执行 2 个 Warp（如果资源允许）
-  - 资源仲裁：HBM Controller 和 SharedMem 优先级仲裁
+  - 资源仲裁：HBM stack 子系统和 SharedMem 优先级仲裁
 ```
 
 **性能观察**：
@@ -172,11 +172,11 @@ scheduler.io.warpHalted(w) :=
 
 | 层级 | 类型 | 深度 | 延迟 | 共享范围 |
 |------|------|------|------|----------|
-| HBM-backed GlobalMem | HbmController + HbmModel | 4096 | HBM controller row timing + 1-cycle storage backend | 全局 (4 SM 共享) |
+| HBM-backed GlobalMem | `HbmStackedMemory`，默认 4 stack | 4096 | 每 stack 独立 controller row timing + 1-cycle storage backend | 全局 (4 SM 共享) |
 | SharedMem (per-SM) | SyncReadMem | 256 | 1 cycle | SM 内 |
 | SharedRegisterFile | Reg | 4 Warp × 4 Lane × 16 Reg | 0 | SM 内 |
 
-真实 HBM 内部还有 stack、channel/pseudo-channel、bank/bank group 和 row buffer 等层次。当前 GPU 模型中的 `HbmController` 已经包含简化的 channel/bank/row 时序，但仍没有建模真实 channel 级并行、bank group 争用、刷新和 ECC。`HbmModel` 只负责存储后端。详见 [HBM 真实结构与控制器职责](../hbm_architecture.md)。
+真实 HBM 内部有 stack、channel/pseudo-channel、bank/bank group 和 row buffer 等层次。当前 GPU 模型使用 `HbmStackedMemory`，默认 4 个 stack；每个 stack 有独立 `HbmController + HbmModel`。地址低位选择 stack，本地地址再进入该 stack 内部的 channel/bank/row 时序模型。当前仍未建模真实 pseudo-channel、bank group 争用、刷新和 ECC。详见 [HBM 真实结构与控制器职责](../hbm_architecture.md)。
 
 ---
 
@@ -209,12 +209,12 @@ scheduler.io.warpHalted(w) :=
 4 SM 并行
 
 性能：
-  总周期：143
-  Live Warp 周期：423
-  Eligible Warp 周期：147
-  Stalled Warp 周期：276
-  No-eligible 周期：42
-  说明：4 个 SM 共享一个 HBM Controller；这里报告最后完成的 SM 计数
+  总周期：105
+  Live Warp 周期：312
+  Eligible Warp 周期：144
+  Stalled Warp 周期：168
+  No-eligible 周期：12
+  说明：4 个 SM 共享默认 4-stack HBM 子系统；这里报告最后完成的 SM 计数
 ```
 
 ### 向量加法 (latency=10)
@@ -224,12 +224,12 @@ scheduler.io.warpHalted(w) :=
 4 SM 并行
 
 性能：
-  总周期：259
-  Live Warp 周期：820
-  Eligible Warp 周期：241
-  Stalled Warp 周期：579
-  No-eligible 周期：83
-  说明：HBM Controller 的 row/bank 时序和全局排队共同拉长执行时间
+  总周期：152
+  Live Warp 周期：509
+  Eligible Warp 周期：224
+  Stalled Warp 周期：285
+  No-eligible 周期：13
+  说明：多 stack 交织降低了单 controller 全局排队，但 row/bank 时序仍会形成等待
 ```
 
 ### CTA/thread/block ID 验证
@@ -243,13 +243,13 @@ scheduler.io.warpHalted(w) :=
 
 ### 调度延迟隐藏指标
 
-以下为 `gpu.DualSchedulerTest` 中单 SM 的性能计数；该测试已经把 global memory 接到 HBM Controller + HBM Model。
+以下为 `gpu.DualSchedulerTest` 中单 SM 的性能计数；该测试已经把 global memory 接到 4-stack HBM 子系统。
 
 | 测试场景 | total | eligible | stalled | no-eligible | 结论 |
 |---------|------:|---------:|--------:|------------:|------|
 | **纯计算（10条ADD）** | 85 | 252 | 0 | 0 | 无访存等待 |
-| **内存密集（latency=10）** | 110 | 126 | 205 | 22 | 访存等待与 HBM 争用同时存在 |
-| **混合程序（latency=5）** | 77 | 226 | 50 | 0 | 大多数等待被覆盖 |
+| **内存密集（latency=10）** | 104 | 131 | 187 | 11 | 访存等待与 HBM 争用同时存在 |
+| **混合程序（latency=5）** | 79 | 224 | 58 | 0 | 大多数等待被覆盖 |
 
 ---
 

@@ -2,7 +2,7 @@ package gpu
 
 import chisel3._
 import chisel3.util._
-import common.{HbmController, HbmModel, HbmRequest}
+import common.{HbmRequest, HbmStackedMemory}
 
 /** Toy GPU Top Level — Multi-SM architecture.
   *
@@ -23,7 +23,8 @@ class ToyGpuTop(
     warpWidth: Int = GpuParams.WarpWidth,
     dw: Int = GpuParams.DataWidth,
     gmemLatency: Int = 10,
-    useSharedArch: Boolean = true // 默认使用共享架构
+    useSharedArch: Boolean = true, // 默认使用共享架构
+    numHbmStacks: Int = GpuParams.HBMStacks
 ) extends Module {
   val io = IO(new Bundle {
     val start = Input(Bool())
@@ -51,38 +52,29 @@ class ToyGpuTop(
   val imem = Mem(GpuParams.IMEMDepth, UInt(GpuParams.InstrWidth.W))
   when(io.imemLoadEn) { imem.write(io.imemLoadAddr, io.imemLoadData) }
 
-  // Shared HBM boundary. The controller is on the GPU side and models
-  // channel/bank/row timing; the model stores data for simulation and tests.
-  val hbmController = Module(
-    new HbmController(
+  // Shared HBM boundary. The stacked subsystem has one controller/model pair per HBM stack.
+  val hbm = Module(
+    new HbmStackedMemory(
       n = warpWidth,
       aw = dw,
+      totalDepth = GpuParams.GlobalDepth,
       addrW = GpuParams.GlobalAddrW,
-      numChannels = 4,
+      numStacks = numHbmStacks,
+      numChannelsPerStack = 4,
       banksPerChannel = 4,
       rowHitLatency = math.max(1, gmemLatency / 3),
       rowMissLatency = gmemLatency,
-      requestQueueDepth = 16
-    )
-  )
-  val hbmModel = Module(
-    new HbmModel(
-      n = warpWidth,
-      aw = dw,
-      depth = GpuParams.GlobalDepth,
-      latency = 1,
-      addrW = GpuParams.GlobalAddrW
+      requestQueueDepth = 16,
+      responseQueueDepth = 8,
+      modelLatency = 1
     )
   )
 
-  hbmModel.io.req <> hbmController.io.memReq
-  hbmController.io.memResp <> hbmModel.io.resp
-
-  hbmModel.io.direct.en := io.gmemExt.en
-  hbmModel.io.direct.we := io.gmemExt.we
-  hbmModel.io.direct.addr := io.gmemExt.addr
-  hbmModel.io.direct.wdata := io.gmemExt.wdata
-  io.gmemExt.rdata := hbmModel.io.direct.rdata
+  hbm.io.direct.en := io.gmemExt.en
+  hbm.io.direct.we := io.gmemExt.we
+  hbm.io.direct.addr := io.gmemExt.addr
+  hbm.io.direct.wdata := io.gmemExt.wdata
+  io.gmemExt.rdata := hbm.io.direct.rdata
 
   // === Streaming Multiprocessors ===
   // 使用共享 CUDA Core 架构（真实 GPU 设计）
@@ -119,13 +111,13 @@ class ToyGpuTop(
   val readRoute = Module(new Queue(UInt(smIdW.W), entries = 16))
   val selectedReqIsRead = !selectedHbmReq.we
   val canRouteSelectedReq = !selectedReqIsRead || readRoute.io.enq.ready
-  hbmController.io.coreReq.valid := smReqValidVec.asUInt.orR && canRouteSelectedReq
-  hbmController.io.coreReq.bits := selectedHbmReq
+  hbm.io.coreReq.valid := smReqValidVec.asUInt.orR && canRouteSelectedReq
+  hbm.io.coreReq.bits := selectedHbmReq
 
-  val hbmCoreReqFire = hbmController.io.coreReq.valid && hbmController.io.coreReq.ready
-  readRoute.io.enq.valid := hbmCoreReqFire && !hbmController.io.coreReq.bits.we
+  val hbmCoreReqFire = hbm.io.coreReq.valid && hbm.io.coreReq.ready
+  readRoute.io.enq.valid := hbmCoreReqFire && !hbm.io.coreReq.bits.we
   readRoute.io.enq.bits := selectedSmId
-  readRoute.io.deq.ready := hbmController.io.coreResp.valid
+  readRoute.io.deq.ready := hbm.io.coreResp.valid
 
   ctaScheduler.io.start := io.start
   io.allHalted := ctaScheduler.io.allDone
@@ -142,10 +134,10 @@ class ToyGpuTop(
       sm.io.imemData(w) := imem.read(sm.io.imemAddr(w))
     }
 
-    sm.io.hbmReq.ready := smReqSelOH(i) && hbmController.io.coreReq.ready && canRouteSelectedReq
-    sm.io.hbmResp.valid := hbmController.io.coreResp.valid && readRoute.io.deq.valid &&
+    sm.io.hbmReq.ready := smReqSelOH(i) && hbm.io.coreReq.ready && canRouteSelectedReq
+    sm.io.hbmResp.valid := hbm.io.coreResp.valid && readRoute.io.deq.valid &&
       readRoute.io.deq.bits === i.U
-    sm.io.hbmResp.bits := hbmController.io.coreResp.bits
+    sm.io.hbmResp.bits := hbm.io.coreResp.bits
 
     io.perf(i) := sm.io.perf
   }
