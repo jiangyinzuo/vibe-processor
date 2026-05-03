@@ -129,6 +129,8 @@ docs/interactive/
 
 **NPU 相关**：
 - NPU 的收缩阵列如何工作？→ [NPU 架构](npu/architecture.md#4-收缩阵列)
+- 什么是 Cube 分形 tile 格式？→ [分形 Tile 格式](npu/fractal_tile_format.md)
+- PE 内部 MAC 为什么要流水化？→ [PE MAC 流水化](npu/pe_mac_pipeline.md)
 - NPU 的 SPMD blockDim/blockIdx 如何工作？→ [NPU 架构](npu/architecture.md#2-spmd-编程模型)
 - NPU 的 DMA 机制？→ [NPU 架构](npu/architecture.md#3-存储层次)
 - 玩具 NPU 和真实昇腾的差距？→ [架构差异](npu/architecture_differences.md)

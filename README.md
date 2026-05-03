@@ -224,6 +224,8 @@ generated/gpu/yosys/
 - **[性能测量](docs/npu/performance_measurement.md)** - 实际加速比 1.22×，重叠率 24.1%
 - **[NPU 流水线时序分析](docs/npu/pipeline_timing_analysis.md)** - Yosys LTP、OpenSTA 粗估和切分优先级
 - **[CubeCore 真实化优化](docs/npu/cubecore_realism_optimization.md)** - Cube 输入快照、L0C 累加和优化前后性能对比
+- **[Cube 分形 Tile 格式](docs/npu/fractal_tile_format.md)** - 16×16 tile、pack/padding 原理和性能效果
+- **[PE MAC 流水化](docs/npu/pe_mac_pipeline.md)** - 两级 MAC、psum 对齐和 Fmax 粗估
 - **[频率与周期联合评估](docs/frequency_performance.md)** - Fmax 粗估和 runtime 换算
 
 ### GPU 文档
@@ -269,7 +271,7 @@ vibe-processor/
 
 ### NPU (昇腾风格)
 
-- ✅ **8×8 收缩阵列** - 矩阵乘法加速
+- ✅ **16×16 收缩阵列** - 分形 tile 矩阵乘法加速
 - ✅ **Control CPU 调度核** - 复用 SPMD block scheduler，负责 device-side block dispatch
 - ✅ **AI CPU 辅助执行部件** - 建模 CPU 类 device task，适合非矩阵/控制型任务
 - ✅ **CubeCore/VectorCore 解耦** - Cube 与 Vector 走独立执行核心
@@ -354,7 +356,7 @@ vibe-processor/
 
 | 特性 | 玩具版本 | 真实昇腾 910 | 差距 |
 |------|---------|-------------|------|
-| 收缩阵列 | 8×8 | 16×16+ | 4× |
+| 收缩阵列 | 16×16 | 16×16+ | 同量级，内部流水和系统规模仍简化 |
 | AI Core 数量 | 4 | 32 | 8× |
 | 流水线级数 | 2 级 | 10-20 级 | 5-10× |
 | 重叠率 | 24.1% | 80-90% | 3-4× |

@@ -85,10 +85,10 @@ HALT                       ; 当前 block 完成，物理核可领取下一个 b
 | HBM | LatencyMem | 4096 | 10 cycles | 全局 | HBM/DDR |
 | L2 Buffer | Mem | 2048 | 组合读 | 多核共享 | L2 Buffer |
 | UB (per-core) | SyncReadMem (双端口) | 256 | 1 cycle | 单核私有 | Unified Buffer |
-| L1 staging | Reg row | 8 elements | 0 | MTE1 私有 | L1 Buffer 简化切片 |
-| L0A/L0B tile FIFO | Reg | 8×8×4 each | 0 | CubeCore 私有 | L0A/L0B |
-| Cube input regs | Reg | 8×8×2 | 0 | CubeUnit 私有 | Cube operand staging |
-| L0C | Reg | 8×8 | 0 | CubeCore 私有 | L0C，支持结果和中间累加 |
+| L1 staging | Reg row | 16 elements | 0 | MTE1 私有 | L1 Buffer 简化切片 |
+| L0A/L0B tile FIFO | Reg | 16×16×4 each | 0 | CubeCore 私有 | L0A/L0B |
+| Cube input regs | Reg | 16×16×2 | 0 | CubeUnit 私有 | Cube operand staging |
+| L0C | Reg | 16×16 | 0 | CubeCore 私有 | L0C，支持结果和中间累加 |
 
 **数据流**：`HBM → (预加载) → L2 → MTE2 → UB → MTE1 → L1 staging → L0A/L0B → CubeCore/Cube → L0C → MTE3 → UB → MTE2 → L2`
 
@@ -100,7 +100,9 @@ HALT                       ; 当前 block 完成，物理核可领取下一个 b
 - **CubeCore issue/launch 两级化**：MATMUL 先锁存 ready tile，再下一拍清 ready bit 并启动 CubeUnit，切断 tile ready 选择到 Cube 启动的同拍路径
 - **Cube 输入快照**：CubeUnit 在启动时锁存 L0A/L0B tile，避免 L0 FIFO 直接组合驱动 SystolicArray
 - **L0C 累加模式**：`MATMUL` bit 27 支持 `L0C := L0C + L0A × L0B`
-- 详见 [DMA Overlap 优化文档](dma_overlap.md) 和 [CubeCore 真实化优化记录](cubecore_realism_optimization.md)
+- **16×16 分形 tile 抽象**：Cube 一次消费一个 16×16 tile，软件侧 helper 负责 pack/unpack 和尾块 padding
+- **PE MAC 两级流水**：PE 内部把乘法和加法拆成两级，SystolicArray 按 `PeMacLatency=2` 对齐 activation skew
+- 详见 [DMA Overlap 优化文档](dma_overlap.md)、[CubeCore 真实化优化记录](cubecore_realism_optimization.md)、[Cube 分形 Tile 格式](fractal_tile_format.md) 和 [PE MAC 流水化](pe_mac_pipeline.md)
 
 ### 与真实昇腾存储层次的映射
 
@@ -119,13 +121,13 @@ HALT                       ; 当前 block 完成，物理核可领取下一个 b
 
 ![收缩阵列](../diagrams/systolic_array.svg)
 
-Weight-Stationary 8×8 收缩阵列，计算 C = A × W (INT8 → INT32)。
+Weight-Stationary 16×16 收缩阵列，计算 C = A × W (INT8 → INT32)。
 
 - **绿色箭头**：激活值水平流动 (data →)
 - **蓝色箭头**：部分和垂直累加 (psum ↓)
-- PE 内部：`psumOut = psumIn + weightReg × dataIn`
-- Skewed feeding：2N-1=15 个注入周期 + N=8 个排空周期
-- **64 个 PE** 并行计算，每周期 64 次乘加操作
+- PE 内部：两级 MAC 流水，`productReg := weightReg × dataIn`，下一拍 `psumOut := psumReg + productReg`
+- Skewed feeding：`N + (N-1)×PeMacLatency = 46` 个注入周期，`N=16` 个排空周期
+- **256 个 PE** 并行计算，每个 tile 完成 `16^3 = 4096` 次乘加
 
 ---
 
@@ -139,7 +141,7 @@ Weight-Stationary 8×8 收缩阵列，计算 C = A × W (INT8 → INT32)。
 | 0x1 | HALT | 停机 | 阻塞 |
 | 0x2 | LOAD | UB → MTE1 → L1 → L0A/L0B | **非阻塞启动** |
 | 0x3 | STORE | L0C → MTE3 → UB (N 行) | 阻塞 |
-| 0x4 | MATMUL | CubeCore: C = A × W 或 C += A × W (8×8, INT8→INT32) | 阻塞等待 CubeCore |
+| 0x4 | MATMUL | CubeCore: C = A × W 或 C += A × W (16×16, INT8→INT32) | 阻塞等待 CubeCore |
 | 0x5 | VECADD | VectorCore: 向量加法 (8路×32bit) | 阻塞等待 VectorCore |
 | 0x6 | RELU | VectorCore: max(0, x) | 阻塞等待 VectorCore |
 | 0x8 | DMA_LOAD | MTE2: L2 → UB (N 行, 含 blockIdx 偏移) | **非阻塞** |
@@ -176,22 +178,23 @@ Weight-Stationary 8×8 收缩阵列，计算 C = A × W (INT8 → INT32)。
 
 ## 7. 性能数据
 
-### 单核 MATMUL (8×8)
+### 单核 MATMUL (16×16)
 
 ```
 程序：DMA_LOAD×2 → LOAD×2 → MATMUL → STORE → DMA_STORE → HALT
 
 性能：
-  总周期：182
-  DMA 周期：72
-  重叠周期：22
+  总周期：349
+  Cube 计算周期：46
+  DMA 周期：144
+  重叠周期：46
 ```
 
 ### 2 核数据并行
 
 ```
-Core 0: total=182, result OK
-Core 1: total=182, result OK
+Core 0: result OK
+Core 1: result OK
 
 吞吐量：2× 单核
 ```
@@ -211,7 +214,7 @@ Core 1: total=182, result OK
 
 | 维度 | 玩具 NPU | 真实昇腾 910 | 差距 |
 |------|---------|-------------|------|
-| **SystolicArray** | 8×8 (64 PE) | 16×16 (256 PE) | 4× |
+| **SystolicArray** | 16×16 (256 PE) | 16×16+ | 阵列规模接近，内部格式/流水/同步仍简化 |
 | **存储层次** | UB + L1 staging + L0A/L0B/L0C + L2/HBM | 完整片上层次、bank、NoC | 仍是简化模型 |
 | **MTE** | MTE1/MTE2/MTE3 三通路 | 更完整的 MTE/队列/同步机制 | 通路已拆分，调度仍简化 |
 | **Control CPU / scheduler** | 显式 `ControlCpu`，复用 `SpmdBlockScheduler` 负责 SPMD block dispatch | Runtime/TS/控制 CPU/固件/硬件队列共同参与 task 调度 | 调度简化为 1D block |
@@ -256,7 +259,8 @@ src/main/scala/ascend/
 ├── AiCpu.scala             # AI CPU 辅助执行部件：CPU 类 L2 row task
 ├── SpmdBlockScheduler.scala # 可复用 1D SPMD block scheduler
 ├── PE.scala                # Processing Element
-├── SystolicArray.scala     # 8×8 收缩阵列
+├── FractalTile.scala       # 16×16 分形 tile pack/unpack helper
+├── SystolicArray.scala     # 16×16 收缩阵列
 ├── CubeUnit.scala          # 矩阵计算单元
 ├── VectorUnit.scala        # 向量计算单元
 ├── CubeCore.scala           # CubeCore：Cube + L0A/L0B/L0C

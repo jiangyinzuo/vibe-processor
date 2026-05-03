@@ -26,7 +26,7 @@ class CubeUnitTest extends AnyFunSpec with ChiselSim {
     dut.io.start.poke(false.B)
 
     var cycles = 0
-    while (!dut.io.done.peek().litToBoolean && cycles < 30) {
+    while (!dut.io.done.peek().litToBoolean && cycles < (4 * N + 32)) {
       dut.clock.step()
       cycles += 1
     }
@@ -39,7 +39,7 @@ class CubeUnitTest extends AnyFunSpec with ChiselSim {
 
     it("computes A * I = A") {
       simulate(new CubeUnit) { dut =>
-        val a = Array.tabulate(N, N)((i, j) => i * N + j + 1)
+        val a = Array.tabulate(N, N)((i, j) => (i * 3 + j + 1) % 64)
         val w = Array.tabulate(N, N)((i, j) => if (i == j) 1 else 0)
         val expected = matmul(a, w)
         val result = runCubeMatmul(dut, a, w)

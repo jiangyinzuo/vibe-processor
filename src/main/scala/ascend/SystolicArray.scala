@@ -6,10 +6,12 @@ import chisel3.util._
 /** Weight-Stationary Systolic Array: C = A * W (NxN matrices).
   *
   * PE[k][j] stores weight W[k][j]. Activation enters row k from the left, flows right (data).
-  * Partial sums flow top-to-bottom (psum).
+  * Partial sums flow top-to-bottom (psum). The row skew matches the PE MAC pipeline latency, so
+  * each row sees the activation for output row i when the partial sum for the same i arrives.
   *
-  * The caller must provide skewed activations over 2N-1 cycles. After feeding, the array drains for
-  * N more cycles. C[i][j] appears at the bottom of column j at absolute cycle (i + j + N).
+  * The caller must provide skewed activations over N + (N-1)*PeMacLatency cycles. After feeding,
+  * the array drains for N more cycles. C[i][j] appears at the bottom of column j at absolute cycle
+  * (i + j + N*PeMacLatency).
   */
 class SystolicArray(
     n: Int = AscendParams.ArraySize,
@@ -40,7 +42,11 @@ class SystolicArray(
   val cycleCnt = RegInit(0.U(8.W))
   val drainCnt = RegInit(0.U(8.W))
 
-  val feedCycles = (2 * n - 1).U
+  private val rowSkew = AscendParams.PeMacLatency
+  private val feedCyclesInt = n + (n - 1) * rowSkew
+  private val outputBaseCycle = n * rowSkew
+
+  val feedCycles = feedCyclesInt.U
   val drainCycles = n.U
   val feedingDone = cycleCnt === feedCycles
 
@@ -96,14 +102,14 @@ class SystolicArray(
   }
 
   // Result capture
-  // C[i][j] appears at psumV(n)(j) at absolute cycle (i + j + n)
+  // C[i][j] appears at psumV(n)(j) at absolute cycle (i + j + n*PeMacLatency)
   val absCycle = Mux(feedingDone, feedCycles + drainCnt, cycleCnt)
   val resultReg = RegInit(VecInit.fill(n, n)(0.S(aw.W)))
 
   when(state === sCompute) {
     for (j <- 0 until n) {
-      val rawIdx = absCycle - (j + n).U
-      when(absCycle >= (j + n).U && rawIdx < n.U) {
+      val rawIdx = absCycle - (j + outputBaseCycle).U
+      when(absCycle >= (j + outputBaseCycle).U && rawIdx < n.U) {
         resultReg(rawIdx(log2Ceil(n) - 1, 0))(j) := psumV(n)(j)
       }
     }

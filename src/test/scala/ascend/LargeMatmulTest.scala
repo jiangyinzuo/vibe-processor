@@ -4,16 +4,16 @@ import chisel3._
 import chisel3.simulator.scalatest.ChiselSim
 import org.scalatest.funspec.AnyFunSpec
 
-/** 大矩阵乘法性能测试：使用 Tiling 技术将 8×8 矩阵分解为 4×4 块
+/** 大矩阵乘法性能测试：使用当前 16×16 Cube tile，并估算更大矩阵的 tiling 成本。
   *
   * 测试场景：
-  *   - 8×8 矩阵乘法，分解为 4 个 4×4 块
-  *   - C[0:4][0:4] = A[0:4][0:4] × W[0:4][0:4] + A[0:4][4:8] × W[4:8][0:4]
+  *   - 16×16 矩阵乘法，一个 Cube tile 完成
+  *   - 32×32 矩阵乘法的 16×16 tile 分解估算
   *   - 展示 NPU 在大矩阵上的性能优势
   */
 class LargeMatmulTest extends AnyFunSpec with ChiselSim {
 
-  val N = AscendParams.ArraySize // 4×4 tile size
+  val N = AscendParams.ArraySize // 16×16 tile size
 
   def encLoad(bufSel: Int, memAddr: Int): Long =
     (0x2L << 28) | ((bufSel & 0x3).toLong << 26) | ((memAddr & 0xffff).toLong << 4)
@@ -86,7 +86,7 @@ class LargeMatmulTest extends AnyFunSpec with ChiselSim {
     cycles
   }
 
-  def matmul8x8(a: Array[Array[Int]], w: Array[Array[Int]]): Array[Array[Int]] = {
+  def matmulTile(a: Array[Array[Int]], w: Array[Array[Int]]): Array[Array[Int]] = {
     val result = Array.ofDim[Int](N, N)
     for (i <- 0 until N; j <- 0 until N) {
       result(i)(j) = (0 until N).map(k => a(i)(k) * w(k)(j)).sum
@@ -96,11 +96,11 @@ class LargeMatmulTest extends AnyFunSpec with ChiselSim {
 
   describe("大矩阵乘法性能测试") {
 
-    it("8×8 矩阵乘法（单程序完成）") {
+    it("16×16 矩阵乘法（单程序完成）") {
       simulate(new ToyAscendTop(numCores = 1, hbmLatency = 10)) { dut =>
         initDut(dut)
 
-        // 简单的 8×8 矩阵乘法测试
+        // 简单的 16×16 矩阵乘法测试
         val a = Array.tabulate(N, N)((i, j) => (i + j + 1) % 8)
         val w = Array.tabulate(N, N)((i, j) => (i * 2 + j) % 8)
 
@@ -131,7 +131,7 @@ class LargeMatmulTest extends AnyFunSpec with ChiselSim {
         val result = Array.tabulate(N)(i => readL2(dut, 2 * N + i))
 
         // 验证结果
-        val expected = matmul8x8(a, w)
+        val expected = matmulTile(a, w)
 
         for (i <- 0 until N; j <- 0 until N) {
           assert(
@@ -141,37 +141,33 @@ class LargeMatmulTest extends AnyFunSpec with ChiselSim {
         }
 
         println("\n" + "=" * 60)
-        println("8×8 矩阵乘法性能测试")
+        println("16×16 矩阵乘法性能测试")
         println("=" * 60)
         println(f"总周期数:                 $totalCycles%4d")
         println("=" * 60)
       }
     }
 
-    it("16×16 矩阵乘法性能估算") {
+    it("32×32 矩阵乘法性能估算") {
       println("\n" + "=" * 60)
-      println("16×16 矩阵乘法性能估算")
+      println("32×32 矩阵乘法性能估算")
       println("=" * 60)
-      println("\n基于 8×8 SystolicArray 的 Tiling 分析：")
-      println("  - 16×16 矩阵分解为 2×2 个 8×8 块")
-      println("  - 每个输出块需要 2 次 MATMUL + 1 次 VECADD")
-      println("  - 总共需要：2×2 × (2×MATMUL + 1×VECADD) = 4 × 3 = 12 次操作")
-      println("\n假设每次操作耗时（基于 8×8 测试）：")
-      println("  - MATMUL: ~70 周期（估算）")
-      println("  - VECADD: ~30 周期（估算）")
-      println("  - 每个输出块: 2×70 + 1×30 = 170 周期")
-      println("  - 总周期数: 4 × 170 = 680 周期")
+      println("\n基于 16×16 SystolicArray 的 Tiling 分析：")
+      println("  - 32×32 矩阵分解为 2×2 个 16×16 输出块")
+      println("  - 每个输出块需要 2 次 MATMUL_ACC 覆盖 K 方向两个 tile")
+      println("  - 总共需要：2×2 × 2 = 8 次 MATMUL/MATMUL_ACC")
+      println("\n假设每个 16×16 tile 约 349 周期（当前单 tile 集成测试）：")
+      println("  - 粗略上限: 8 × 349 = 2792 周期")
+      println("  - 若 DMA 与 Cube 重叠，实际可低于该顺序上限")
       println("\n理论峰值性能：")
-      println("  - 16×16×16 = 4,096 次乘加操作")
-      println("  - 8×8 SystolicArray 每周期 64 次乘加")
-      println("  - 理论最少周期: 4,096 / 64 = 64 周期")
-      println("  - 实际周期: 680")
-      println("  - 硬件利用率: 64 / 680 = 9.4%")
+      println("  - 32×32×32 = 32,768 次乘加操作")
+      println("  - 16×16 SystolicArray 峰值为 256 个 PE")
+      println("  - 不考虑填充/流水/搬运时，理论最少约 128 个 PE 周期")
       println("\n瓶颈分析：")
-      println("  ✗ DMA 开销大：每次 MATMUL 需要 2 次 DMA_LOAD + 1 次 DMA_STORE")
-      println("  ✗ Tiling 开销：需要多次加载和累加中间结果")
+      println("  ✗ DMA 开销仍大：每个 K tile 都要搬运 A/B tile")
+      println("  ✗ Tiling 需要 L0C 累加和最终 STORE")
       println("\n优化方向：")
-      println("  ✓ 增大 SystolicArray 尺寸（如 16×16 或 32×32）")
+      println("  ✓ 使用更真实的分形格式搬运，减少实时重排")
       println("  ✓ 使用更大的片上缓存，减少 DMA 次数")
       println("  ✓ 流水线优化：DMA 和计算重叠（已实现基础设施）")
       println("  ✓ 多核并行：2 核可以并行处理不同的输出块")

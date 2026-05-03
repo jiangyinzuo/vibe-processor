@@ -35,7 +35,9 @@ class CubeUnit(
   val sIdle :: sStartSA :: sWaitSA :: sFeed :: sDrain :: sDone :: Nil = Enum(6)
   val state = RegInit(sIdle)
   val feedCnt = RegInit(0.U(8.W))
-  val feedCycles = (2 * n - 1).U
+  private val rowSkew = AscendParams.PeMacLatency
+  private val feedCyclesInt = n + (n - 1) * rowSkew
+  val feedCycles = feedCyclesInt.U
 
   switch(state) {
     is(sIdle) {
@@ -63,10 +65,13 @@ class CubeUnit(
   sa.io.weightData := weightTileReg
   sa.io.actValid := state === sFeed
 
-  // Skewed activation: at cycle feedCnt, actIn(k) = A[feedCnt-k][k]
+  // Skewed activation: at cycle feedCnt, actIn(k) = A[feedCnt-k*rowSkew][k].
+  // rowSkew follows the PE MAC pipeline latency so psums and activations stay aligned.
   for (k <- 0 until n) {
-    val idx = (feedCnt - k.U)(log2Ceil(n) - 1, 0) // 扩展到 log2Ceil(n) bits
-    val valid = state === sFeed && feedCnt >= k.U && (feedCnt - k.U) < n.U
+    val skew = (k * rowSkew).U
+    val logicalRow = feedCnt - skew
+    val idx = logicalRow(log2Ceil(n) - 1, 0)
+    val valid = state === sFeed && feedCnt >= skew && logicalRow < n.U
     sa.io.actIn(k) := Mux(valid, actTileReg(idx)(k), 0.S(dw.W))
   }
 

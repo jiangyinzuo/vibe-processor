@@ -65,7 +65,7 @@ class Pipeline3Test extends AnyFunSpec with ChiselSim {
     dut.io.hbmExt.we.poke(false.B)
   }
 
-  def runToHalt(dut: ToyAscendTop, maxCycles: Int = 800): Int = {
+  def runToHalt(dut: ToyAscendTop, maxCycles: Int = 2500): Int = {
     dut.io.start.poke(true.B)
     dut.clock.step()
     dut.io.start.poke(false.B)

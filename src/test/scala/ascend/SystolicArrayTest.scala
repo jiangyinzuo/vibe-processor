@@ -35,12 +35,13 @@ class SystolicArrayTest extends AnyFunSpec with ChiselSim {
     // Wait for LOAD_WEIGHT -> COMPUTE
     dut.clock.step()
 
-    // Feed skewed activations for 2N-1 cycles
-    val feedCycles = 2 * N - 1
+    // Feed skewed activations. Row skew follows the PE MAC pipeline latency.
+    val rowSkew = AscendParams.PeMacLatency
+    val feedCycles = N + (N - 1) * rowSkew
     for (t <- 0 until feedCycles) {
       dut.io.actValid.poke(true.B)
       for (k <- 0 until N) {
-        val i = t - k
+        val i = t - k * rowSkew
         val v = if (i >= 0 && i < N) a(i)(k) else 0
         dut.io.actIn(k).poke(v.S(8.W))
       }
@@ -52,7 +53,7 @@ class SystolicArrayTest extends AnyFunSpec with ChiselSim {
 
     // Wait for done
     var cycles = 0
-    while (dut.io.done.peek().litToBoolean == false && cycles < 20) {
+    while (dut.io.done.peek().litToBoolean == false && cycles < (N + rowSkew + 8)) {
       dut.clock.step()
       cycles += 1
     }
@@ -71,7 +72,7 @@ class SystolicArrayTest extends AnyFunSpec with ChiselSim {
 
     it("computes A * I = A (identity weight)") {
       simulate(new SystolicArray) { dut =>
-        val a = Array.tabulate(N, N)((i, j) => i * N + j + 1)
+        val a = Array.tabulate(N, N)((i, j) => (i * 3 + j + 1) % 64)
         val w = Array.tabulate(N, N)((i, j) => if (i == j) 1 else 0)
         val expected = matmul(a, w)
         val result = runMatmul(dut, a, w)
@@ -88,7 +89,7 @@ class SystolicArrayTest extends AnyFunSpec with ChiselSim {
     it("computes I * W = W (identity activation)") {
       simulate(new SystolicArray) { dut =>
         val a = Array.tabulate(N, N)((i, j) => if (i == j) 1 else 0)
-        val w = Array.tabulate(N, N)((i, j) => i * N + j + 2)
+        val w = Array.tabulate(N, N)((i, j) => (i * 3 + j + 2) % 64)
         val expected = matmul(a, w)
         val result = runMatmul(dut, a, w)
 

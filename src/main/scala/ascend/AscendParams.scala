@@ -6,7 +6,9 @@ import chisel3._
 object AscendParams {
   val DataWidth = 8
   val AccWidth = 32
-  val ArraySize = 8 // 升级：从 4×4 扩展到 8×8 (64 个 PE)
+  val FractalTileSize = 16
+  val ArraySize = FractalTileSize // Cube tile is one 16×16 fractal block (256 PEs)
+  val PeMacLatency = 2 // PE multiply and add are split into two pipeline stages
   val InstrWidth = 32
   val NumCores = 2
   val BlockDimWidth = 16
