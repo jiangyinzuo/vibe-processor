@@ -47,13 +47,6 @@ chmod +x cs
 export PATH="$PATH:$HOME/.local/share/coursier/bin"
 ```
 
-**macOS (Homebrew)：**
-
-```bash
-brew install coursier/formulas/coursier verilator
-cs setup --jvm 21
-```
-
 验证环境：
 
 ```bash
