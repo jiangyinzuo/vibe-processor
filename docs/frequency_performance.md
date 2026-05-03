@@ -58,9 +58,10 @@ Liberty: sky130_fd_sc_hd slow corner, ss_100C_1v60
 
 | 模块 | critical path | Fmax 粗估 | 结论 |
 |---|---:|---:|---|
-| `CubeCore` | 301.183 ns | 3.32 MHz | 当前 NPU 频率主瓶颈 |
-| `AiCore` | 287.178 ns | 3.48 MHz | 被 Cube/CubeCore 侧路径拖住 |
-| `SystolicArray` | 60.431 ns | 16.55 MHz | 下一层计算阵列瓶颈 |
+| `CubeCore` | 136.527 ns | 7.32 MHz | Cube 输入快照后仍是系统级瓶颈 |
+| `AiCore` | 136.463 ns | 7.33 MHz | 已随 CubeCore 同步改善 |
+| `SystolicArray` | 59.591 ns | 16.78 MHz | 下一层计算阵列瓶颈 |
+| `CubeUnit` | 50.547 ns | 19.78 MHz | 独立模块不是当前系统瓶颈 |
 | `VectorCore` | 28.141 ns | 35.54 MHz | 次要瓶颈 |
 | `Mte2` | 19.342 ns | 51.70 MHz | 有压力但不是第一优先 |
 | `ControlCpu` | 14.544 ns | 68.76 MHz | 调度控制不主导 NPU 频率 |
@@ -70,17 +71,17 @@ Liberty: sky130_fd_sc_hd slow corner, ss_100C_1v60
 
 | 场景 | cycles | 使用 Fmax | runtime 粗估 |
 |---|---:|---:|---:|
-| 单核 8×8 MATMUL | 182 | 3.32 MHz | 54.8 us |
-| 2 核 SPMD `blockDim=4` | 367 | 3.32 MHz | 110.5 us |
-| `Pipeline3Test` 3 tile | 447 | 3.32 MHz | 134.6 us |
+| 单核 8×8 MATMUL | 182 | 7.32 MHz | 24.9 us |
+| 2 核 SPMD `blockDim=4` | 367 | 7.32 MHz | 50.1 us |
+| `Pipeline3Test` 3 tile | 447 | 7.32 MHz | 61.1 us |
 
-如果后续把 `CubeCore/CubeUnit` 切到接近 `SystolicArray` 当前独立水平，即约 16.55 MHz，单核 8×8 MATMUL 的粗估时间会变成：
+如果后续把 `SystolicArray/PE` 切到更高频率，并让 `CubeCore` 继续跟随改善到接近当前 `SystolicArray` 独立水平，即约 16.78 MHz，单核 8×8 MATMUL 的粗估时间会变成：
 
 ```text
-182 / 16.55 = 11.0 us
+182 / 16.78 = 10.8 us
 ```
 
-因此，继续拆 `CubeCore -> CubeUnit -> SystolicArray/PE` 的收益不仅会改变单次 MATMUL 的周期数，也会显著提高每周期对应的真实时间。
+因此，继续拆 `CubeCore -> CubeUnit -> SystolicArray/PE` 的收益不仅会改变单次 MATMUL 的周期数，也会显著提高每周期对应的真实时间。Cube 输入快照的详细前后对比见 [CubeCore 真实化优化记录](npu/cubecore_realism_optimization.md)。
 
 ### GPU
 

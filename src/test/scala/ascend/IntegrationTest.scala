@@ -18,6 +18,7 @@ class IntegrationTest extends AnyFunSpec with ChiselSim {
     (0x9L << 28) | ((ubBase & 0xff).toLong << 20) | ((l2Base & 0xffff).toLong << 4)
   def encDmaWait: Long = 0xaL << 28
   def encMatmul: Long = 0x4L << 28
+  def encMatmulAcc: Long = (0x4L << 28) | (1L << 27)
   def encNop: Long = 0x0L
   def encHalt: Long = 0x1L << 28
 
@@ -148,6 +149,48 @@ class IntegrationTest extends AnyFunSpec with ChiselSim {
         println(
           f"理论峰值利用率:     ${cubeComputeCycles * 100.0 / (cubeComputeCycles + bubbleCycles)}%.1f%%"
         )
+      }
+    }
+
+    it("accumulates two MATMUL tiles into L0C") {
+      simulate(new ToyAscendTop) { dut =>
+        initDut(dut)
+
+        val a = Array.tabulate(N, N)((i, j) => (i + j + 2) % 7)
+        val w = Array.tabulate(N, N)((i, j) => if (i == j) 1 else (i * 2 + j) % 4)
+        val single = Array.tabulate(N, N)((i, j) => (0 until N).map(k => a(i)(k) * w(k)(j)).sum)
+        val expected = Array.tabulate(N, N)((i, j) => single(i)(j) * 2)
+
+        for (i <- 0 until N) writeL2(dut, i, a(i))
+        for (i <- 0 until N) writeL2(dut, N + i, w(i))
+
+        val program = Seq(
+          encDmaLoad(ubBase = 0, l2Base = 0),
+          encDmaLoad(ubBase = N, l2Base = N),
+          encDmaWait,
+          encLoad(1, 0),
+          encLoad(0, N),
+          encMatmul,
+          encLoad(1, 0),
+          encLoad(0, N),
+          encMatmulAcc,
+          encStore(2, 2 * N),
+          encDmaStore(ubBase = 2 * N, l2Base = 2 * N),
+          encDmaWait,
+          encHalt
+        )
+        loadProgram(dut, program)
+        runToHalt(dut, maxCycles = 700)
+
+        for (i <- 0 until N) {
+          val row = readL2(dut, 2 * N + i)
+          for (j <- 0 until N) {
+            assert(
+              row(j) == expected(i)(j),
+              s"C[$i][$j]: got ${row(j)}, expected ${expected(i)(j)}"
+            )
+          }
+        }
       }
     }
   }

@@ -1,14 +1,15 @@
 # NPU 流水线时序分析
 
-本文记录 toy NPU 在 CubeCore/VectorCore/MTE 解耦后的两层工具分析结果，用于判断后续流水线应该优先切在哪里，并记录第一次流水线切分后的验证结果。
+本文记录 toy NPU 在 CubeCore/VectorCore/MTE 解耦后的两层工具分析结果，用于判断后续流水线应该优先切在哪里，并记录已完成的流水线切分验证结果。
 
 结论先行：
 
 1. 已完成第一步切分：`CubeCore` 的 tile issue / launch 路径拆成两拍。
-2. 切分后功能测试、Verilog elaboration 和 Yosys `check` 均通过。
-3. 切分后 `CubeCore` 的 LTP 最长路径已经转移到 `CubeUnit` / `SystolicArray` feed 到 PE 乘加路径；下一步若继续提频，应优先切计算阵列内部。
-4. 当前不应该优先切 `ScalarUnit`。它在第二层 pre-layout STA 下可以满足 `10ns` 参考约束。
-5. 这些数据是 pre-layout 粗估，不是最终签核 Fmax；它们适合指导早期流水线切分点选择。
+2. 已完成第二步切分：`CubeUnit` 启动时锁存 L0A/L0B tile，切断 L0 FIFO 到 SystolicArray/PE 的长组合路径。
+3. 切分后功能测试、Verilog elaboration 和 Yosys `check` 均通过。
+4. 当前系统级 Fmax 粗估从约 `3.5MHz` 提升到约 `7.3MHz`；下一步若继续提频，应优先切 `SystolicArray` / `PE` 内部乘加路径。
+5. 当前不应该优先切 `ScalarUnit`。它在第二层 pre-layout STA 下可以满足 `10ns` 参考约束。
+6. 这些数据是 pre-layout 粗估，不是最终签核 Fmax；它们适合指导早期流水线切分点选择。
 
 ## 环境
 
@@ -162,13 +163,16 @@ l0aReady/l0bReady selected by computeSlot
 
    当前实现位于 [CubeCore.scala](../../src/main/scala/ascend/CubeCore.scala#L89)：`sIdle` 只检查 ready bit 并锁存 `issueSlot`，`sLaunch` 再更新 `activeSlot`、清 ready bit、递增 `computeSlot` 并拉高 `cube.io.start`。这样 `l0aReady/l0bReady` 选择不再和 Cube 启动、ready bit 清除处于同一拍。
 
-2. **再切 `SystolicArray` / `CubeUnit`。**
-   如果目标频率更高，需要继续把 PE 内乘加或阵列控制路径分拍。当前 `SystolicArray` 独立 data arrival 约 `60.9ns`，已经说明计算阵列不能长期保持单周期/浅流水假设。
+2. **切 `CubeUnit` L0 输入快照。已实现。**
+   CubeUnit 在启动时锁存 L0A/L0B tile，避免 L0 FIFO 直接组合驱动 SystolicArray。详细前后对比见 [CubeCore 真实化优化记录](cubecore_realism_optimization.md)。
 
-3. **后续处理 `VectorCore`。**
+3. **再切 `SystolicArray` / `PE`。**
+   如果目标频率更高，需要继续把 PE 内乘加或阵列控制路径分拍。当前 `SystolicArray` 独立 data arrival 约 `59.6ns`，已经说明计算阵列不能长期保持单周期/浅流水假设。
+
+4. **后续处理 `VectorCore`。**
    `VectorCore` 的路径约 `28.1ns`，主要是状态机与 vector 读写控制 mux 链。它会影响 vector 指令频率，但不是当前最大瓶颈。
 
-4. **最后处理 `Mte2`。**
+5. **最后处理 `Mte2`。**
    `Mte2` 约 `19.3ns`，可通过地址生成寄存、读写阶段更细分来降低路径，但优先级低于 CubeCore/Cube。
 
 5. **暂不优先切 `ScalarUnit`。**
@@ -231,7 +235,7 @@ done
 | `CubeCore` | 9 | `state` / `cubeReadSlot` → `CubeUnit` act feed → `SystolicArray` PE multiply/add |
 | `AiCore` | 16 | `ScalarUnit` vector start decode → `perf_bubbleCycles` 条件 |
 
-解释：`CubeCore` 的 LTP 数字没有直接下降，因为 LTP 只数拓扑层数，不计真实门延迟；切分后最长结构路径已经不再是 ready-bit issue/launch，而是落到 `CubeUnit` / `SystolicArray` 数据注入到 PE 乘加路径。后续要继续提频，应切 `CubeUnit`/`SystolicArray`，而不是继续拆 `ScalarUnit`。
+解释：`CubeCore` 的 LTP 数字没有直接下降，因为 LTP 只数拓扑层数，不计真实门延迟；第一步切分后最长结构路径从 ready-bit issue/launch 转移到 `CubeUnit` / `SystolicArray` 数据注入路径。第二步输入快照已经显著改善 STA 粗估，后续要继续提频，应切 `SystolicArray` / `PE`，而不是继续拆 `ScalarUnit`。
 
 ## 限制
 

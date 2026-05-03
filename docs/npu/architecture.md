@@ -87,7 +87,8 @@ HALT                       ; 当前 block 完成，物理核可领取下一个 b
 | UB (per-core) | SyncReadMem (双端口) | 256 | 1 cycle | 单核私有 | Unified Buffer |
 | L1 staging | Reg row | 8 elements | 0 | MTE1 私有 | L1 Buffer 简化切片 |
 | L0A/L0B tile FIFO | Reg | 8×8×4 each | 0 | CubeCore 私有 | L0A/L0B |
-| L0C | Reg | 8×8 | 0 | CubeCore 私有 | L0C |
+| Cube input regs | Reg | 8×8×2 | 0 | CubeUnit 私有 | Cube operand staging |
+| L0C | Reg | 8×8 | 0 | CubeCore 私有 | L0C，支持结果和中间累加 |
 
 **数据流**：`HBM → (预加载) → L2 → MTE2 → UB → MTE1 → L1 staging → L0A/L0B → CubeCore/Cube → L0C → MTE3 → UB → MTE2 → L2`
 
@@ -97,7 +98,9 @@ HALT                       ; 当前 block 完成，物理核可领取下一个 b
 - **UB 双端口**：Port A 由 MTE1/MTE3/VectorCore 仲裁，Port B 由 MTE2 独占
 - **L0 tile FIFO**：L0A/L0B 各有 4 个 tile slot，支持本地 LOAD 与 MATMUL 重叠
 - **CubeCore issue/launch 两级化**：MATMUL 先锁存 ready tile，再下一拍清 ready bit 并启动 CubeUnit，切断 tile ready 选择到 Cube 启动的同拍路径
-- 详见 [DMA Overlap 优化文档](dma_overlap.md)
+- **Cube 输入快照**：CubeUnit 在启动时锁存 L0A/L0B tile，避免 L0 FIFO 直接组合驱动 SystolicArray
+- **L0C 累加模式**：`MATMUL` bit 27 支持 `L0C := L0C + L0A × L0B`
+- 详见 [DMA Overlap 优化文档](dma_overlap.md) 和 [CubeCore 真实化优化记录](cubecore_realism_optimization.md)
 
 ### 与真实昇腾存储层次的映射
 
@@ -108,7 +111,7 @@ HALT                       ; 当前 block 完成，物理核可领取下一个 b
 | L1 Buffer (单核私有) | MTE1 row staging + UB | L1 被简化为 MTE1 的行级 staging |
 | L0A (Cube 激活) | CubeCore L0A tile FIFO | CubeCore 私有，按 tile slot 管理 |
 | L0B (Cube 权重) | CubeCore L0B tile FIFO | CubeCore 私有，按 tile slot 管理 |
-| L0C (Cube 结果) | CubeCore L0C | CubeCore 私有，MTE3 读回 UB |
+| L0C (Cube 结果/中间结果) | CubeCore L0C | CubeCore 私有，支持 MATMUL accumulate，MTE3 读回 UB |
 
 ---
 
@@ -136,7 +139,7 @@ Weight-Stationary 8×8 收缩阵列，计算 C = A × W (INT8 → INT32)。
 | 0x1 | HALT | 停机 | 阻塞 |
 | 0x2 | LOAD | UB → MTE1 → L1 → L0A/L0B | **非阻塞启动** |
 | 0x3 | STORE | L0C → MTE3 → UB (N 行) | 阻塞 |
-| 0x4 | MATMUL | CubeCore: C = A × W (8×8, INT8→INT32) | 阻塞等待 CubeCore |
+| 0x4 | MATMUL | CubeCore: C = A × W 或 C += A × W (8×8, INT8→INT32) | 阻塞等待 CubeCore |
 | 0x5 | VECADD | VectorCore: 向量加法 (8路×32bit) | 阻塞等待 VectorCore |
 | 0x6 | RELU | VectorCore: max(0, x) | 阻塞等待 VectorCore |
 | 0x8 | DMA_LOAD | MTE2: L2 → UB (N 行, 含 blockIdx 偏移) | **非阻塞** |
@@ -145,6 +148,7 @@ Weight-Stationary 8×8 收缩阵列，计算 C = A × W (INT8 → INT32)。
 
 **关键特性：**
 - LOAD 在 MTE1 空闲时启动后继续取指，CubeCore 内部等待完整 tile ready 后再计算
+- MATMUL bit 27 为 accumulate 位：0 表示覆盖 L0C，1 表示累加到 L0C
 - DMA_LOAD/DMA_STORE 为非阻塞指令，支持 DMA-Compute Overlap
 - DMA_WAIT 显式同步所有飞行中的 DMA 请求
 - 详见 [DMA Overlap 优化文档](dma_overlap.md)

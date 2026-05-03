@@ -23,6 +23,7 @@ class CubeCore(
 
   val io = IO(new Bundle {
     val start = Input(Bool())
+    val accumulate = Input(Bool())
     val done = Output(Bool())
     val resultValid = Output(Bool())
 
@@ -49,6 +50,8 @@ class CubeCore(
   val computeSlot = RegInit(0.U(slotW.W))
   val activeSlot = RegInit(0.U(slotW.W))
   val issueSlot = RegInit(0.U(slotW.W))
+  val issueAccumulate = RegInit(false.B)
+  val activeAccumulate = RegInit(false.B)
   val l0aReady = RegInit(VecInit.fill(tileSlots)(false.B))
   val l0bReady = RegInit(VecInit.fill(tileSlots)(false.B))
 
@@ -89,11 +92,13 @@ class CubeCore(
     is(sIdle) {
       when(io.start && l0aReady(computeSlot) && l0bReady(computeSlot)) {
         issueSlot := computeSlot
+        issueAccumulate := io.accumulate
         state := sLaunch
       }
     }
     is(sLaunch) {
       activeSlot := issueSlot
+      activeAccumulate := issueAccumulate
       l0aReady(issueSlot) := false.B
       l0bReady(issueSlot) := false.B
       computeSlot := issueSlot + 1.U
@@ -102,7 +107,12 @@ class CubeCore(
     }
     is(sRun) {
       when(cube.io.done) {
-        l0c := cube.io.result
+        // L0C is both the Cube output buffer and, in accumulate mode, the intermediate partial-sum
+        // buffer used by tiled GEMM.
+        for (i <- 0 until n; j <- 0 until n) {
+          val acc = l0c(i)(j) +& cube.io.result(i)(j)
+          l0c(i)(j) := Mux(activeAccumulate, acc.asUInt(aw - 1, 0).asSInt, cube.io.result(i)(j))
+        }
         state := sDone
       }
     }

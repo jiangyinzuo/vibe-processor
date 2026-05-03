@@ -223,6 +223,7 @@ generated/gpu/yosys/
 - **[DMA-Compute Overlap](docs/npu/dma_overlap.md)** - 非阻塞 DMA、双缓冲、性能优化
 - **[性能测量](docs/npu/performance_measurement.md)** - 实际加速比 1.22×，重叠率 24.1%
 - **[NPU 流水线时序分析](docs/npu/pipeline_timing_analysis.md)** - Yosys LTP、OpenSTA 粗估和切分优先级
+- **[CubeCore 真实化优化](docs/npu/cubecore_realism_optimization.md)** - Cube 输入快照、L0C 累加和优化前后性能对比
 - **[频率与周期联合评估](docs/frequency_performance.md)** - Fmax 粗估和 runtime 换算
 
 ### GPU 文档
@@ -275,6 +276,7 @@ vibe-processor/
 - ✅ **MTE 多通路** - MTE1/MTE2/MTE3 分别覆盖 UB→L0、L2↔UB、L0C→UB
 - ✅ **多核并行** - 2 个 AiCore，独立执行
 - ✅ **真实 Local Memory 层次** - UB、L1 staging、L0A/L0B/L0C 分层建模
+- ✅ **Cube 输入快照与 L0C 累加** - Cube operand staging，支持 MATMUL accumulate
 - ✅ **性能计数器** - 精确的性能统计
 
 ### GPU (英伟达风格)
@@ -319,14 +321,14 @@ vibe-processor/
 ## 🧪 测试覆盖
 
 ```
-总测试数：     48 个
-通过：         48 个 ✅
+总测试数：     62 个
+通过：         62 个 ✅
 通过率：       100% 🎉
 ```
 
-**NPU 测试 (23)：** IntegrationTest, Pipeline3Test, TripleBufferTest, PerfCounterTest, OverlapBenchmark, CubeUnitTest, SystolicArrayTest, VectorUnitTest, MultiCoreTest 等
+**NPU 测试 (28)：** IntegrationTest, CubeCoreTest, Pipeline3Test, TripleBufferTest, PerfCounterTest, OverlapBenchmark, CubeUnitTest, SystolicArrayTest, VectorUnitTest, MultiCoreTest 等
 
-**GPU 测试 (25)：** GpuIntegrationTest, DualSchedulerTest, SharedArchDebug, InstructionDispatcherMultiIssueTest, QuickSharedArchTest, CudaCoreTest 等
+**GPU/通用/Benchmark 测试 (34)：** GpuIntegrationTest, DualSchedulerTest, SharedArchDebug, InstructionDispatcherMultiIssueTest, QuickSharedArchTest, CudaCoreTest, LatencyMemTest, MatmulBenchmark 等
 
 ## 🔬 学习价值
 
@@ -365,4 +367,3 @@ vibe-processor/
 | Warp 大小 | 4 | 32 | 8× |
 | 调度器/SM | 2 | 4 | 2× |
 | 架构模型 | ✅ 共享 CUDA Core | ✅ 共享 CUDA Core | **一致** |
-

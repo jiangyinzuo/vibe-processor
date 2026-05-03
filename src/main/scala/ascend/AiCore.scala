@@ -69,6 +69,7 @@ class AiCore(
   scalar.io.mte3Done := mte3.io.done
 
   cubeCore.io.start := scalar.io.cubeStart
+  cubeCore.io.accumulate := scalar.io.cubeAccumulate
   scalar.io.cubeDone := cubeCore.io.done
 
   vectorCore.io.start := scalar.io.vectorStart

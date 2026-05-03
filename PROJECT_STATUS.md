@@ -47,15 +47,15 @@
 ## 测试状态
 
 ```
-总测试数：     37 个
-通过：         37 个 ✅
+总测试数：     62 个
+通过：         62 个 ✅
 失败：         0 个
 通过率：       100% 🎉
 ```
 
-**NPU 测试 (21)：** IntegrationTest, PerfCounterTest, OverlapBenchmark, CubeUnitTest, SystolicArrayTest, VectorUnitTest, MultiCoreTest, OverlapTest, LargeMatmulTest 等
+**NPU 测试 (28)：** IntegrationTest, CubeCoreTest, PerfCounterTest, OverlapBenchmark, CubeUnitTest, SystolicArrayTest, VectorUnitTest, MultiCoreTest, OverlapTest, LargeMatmulTest 等
 
-**GPU 测试 (16)：** GpuIntegrationTest, DualSchedulerTest, SharedArchDebug, QuickSharedArchTest, CudaCoreTest 等
+**GPU/通用/Benchmark 测试 (34)：** GpuIntegrationTest, DualSchedulerTest, SharedArchDebug, InstructionDispatcherMultiIssueTest, QuickSharedArchTest, CudaCoreTest, LatencyMemTest, MatmulBenchmark 等
 
 ---
 

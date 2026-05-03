@@ -54,6 +54,7 @@ class ScalarUnit(
     val mte3UbAddr = Output(UInt(AscendParams.UBAddrW.W))
 
     val cubeStart = Output(Bool())
+    val cubeAccumulate = Output(Bool())
     val cubeDone = Input(Bool())
 
     val vectorStart = Output(Bool())
@@ -86,6 +87,7 @@ class ScalarUnit(
   val memAddrLat = RegInit(0.U(AscendParams.UBAddrW.W))
   val vecSrc1Lat = RegInit(0.U(AscendParams.UBAddrW.W))
   val vecSrc2Lat = RegInit(0.U(AscendParams.UBAddrW.W))
+  val cubeAccLat = RegInit(false.B)
 
   val instr = io.imemData
   val op = instr(31, 28)
@@ -95,6 +97,7 @@ class ScalarUnit(
   val vecSrc2Addr = instr(21, 16)
   val dmaUbBase = instr(27, 20)
   val dmaL2Base = instr(19, 4)
+  val matmulAccumulate = instr(27)
 
   io.imemAddr := pc
   io.halted := state === sHalted
@@ -109,6 +112,7 @@ class ScalarUnit(
   io.mte3UbAddr := memAddrLat
 
   io.cubeStart := false.B
+  io.cubeAccumulate := cubeAccLat
 
   io.vectorStart := false.B
   io.vectorOp := Mux(opLat === Opcode.RELU, 1.U, 0.U)
@@ -138,6 +142,7 @@ class ScalarUnit(
       memAddrLat := memAddr
       vecSrc1Lat := vecSrc1Addr
       vecSrc2Lat := vecSrc2Addr
+      cubeAccLat := matmulAccumulate
 
       switch(op) {
         is(Opcode.NOP) {

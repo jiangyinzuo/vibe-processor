@@ -21,6 +21,7 @@
 docs/npu/
 ├── architecture.md              # NPU 架构详解
 ├── architecture_differences.md  # 玩具 vs 真实昇腾差异
+├── cubecore_realism_optimization.md # CubeCore 真实化优化
 ├── dma_overlap.md               # DMA-Compute Overlap 优化
 ├── pipeline_timing_analysis.md  # NPU 流水线时序分析
 ├── performance_measurement.md   # 实际性能测量报告
@@ -30,6 +31,7 @@ docs/npu/
 **快速链接**：
 - [NPU 架构](npu/architecture.md) - Control CPU、AI CPU、SPMD block、收缩阵列、DMA、多核并行
 - [架构差异](npu/architecture_differences.md) - 与真实昇腾的差距分析
+- [CubeCore 真实化优化](npu/cubecore_realism_optimization.md) - Cube 输入快照、L0C 累加和前后性能对比
 - [DMA Overlap](npu/dma_overlap.md) - 非阻塞 DMA、双缓冲、性能优化
 - [NPU 流水线时序分析](npu/pipeline_timing_analysis.md) - Yosys LTP、OpenSTA 粗估和切分优先级
 - [性能测量](npu/performance_measurement.md) - 实际加速比 1.22×，重叠率 24.1%
@@ -89,8 +91,9 @@ docs/interactive/
 1. [NPU 架构](npu/architecture.md) - Control CPU、AI CPU、SPMD block、收缩阵列、DMA、多核
 2. [DMA Overlap](npu/dma_overlap.md) - 非阻塞 DMA、双缓冲优化
 3. [架构差异](npu/architecture_differences.md) - 与真实昇腾对比
-4. [性能对比](performance_comparison.md) - 性能分析
-5. [频率与周期联合评估](frequency_performance.md) - cycles × Fmax 估算运行时间
+4. [CubeCore 真实化优化](npu/cubecore_realism_optimization.md) - Cube 输入快照、L0C 累加
+5. [性能对比](performance_comparison.md) - 性能分析
+6. [频率与周期联合评估](frequency_performance.md) - cycles × Fmax 估算运行时间
 
 ### 深入理解 GPU（1.5 小时）
 
@@ -104,7 +107,7 @@ docs/interactive/
 1. [DMA Overlap](npu/dma_overlap.md) - 计算与传输重叠
 2. [性能对比](performance_comparison.md) - 瓶颈分析
 3. [双调度器](gpu/dual_scheduler_summary.md) - 并行优化
-4. [架构差异](npu/architecture_differences.md) - 真实硬件优化
+4. [CubeCore 真实化优化](npu/cubecore_realism_optimization.md) - 真实硬件优化
 
 ---
 
