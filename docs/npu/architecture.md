@@ -1,12 +1,18 @@
 # 玩具版昇腾 NPU 架构文档
 
+- 16x16 收缩阵列，L0A/L0B/L0C 分层建模。
+- Control CPU 复用 SPMD block scheduler；AI CPU 建模 device-side row task。
+- MTE1/MTE2/MTE3 分别覆盖 UB->L0、L2<->UB、L0C->UB。
+- CopyInQueue、DMAQueue、CopyOutQueue 与 token wait 表达 producer/consumer 边界。
+- 性能计数器统计 Cube、MTE、数据流重叠和等待气泡。
+
 ## 概述
 
 玩具版昇腾 NPU：显式 Control CPU + AI CPU 辅助执行部件 + SPMD block 调度 + 2×AiCore，显式 CubeCore/VectorCore 解耦 + MTE 多通路 + 分层 Local Memory。
 
 使用 Chisel 7 (Scala) 编写，Verilator (via svsim) 仿真，ScalaTest 验证。
 
-**[🔗 交互式架构图](../interactive/index.html)** - 可视化 NPU 架构，支持模块导航和数据流动画
+**[交互式架构图](../interactive/index.html)** - 可视化 NPU 架构，支持模块导航和数据流动画
 
 ---
 
@@ -282,6 +288,15 @@ src/main/scala/ascend/
 ├── PerfCounters.scala      # 性能计数器
 └── ToyAscendTop.scala      # 顶层 (Control CPU + AiCore + L2 + HBM)
 ```
+
+### NPU (vs 昇腾 910)
+
+| 特性 | 玩具版本 | 真实昇腾 910 | 差距 |
+|------|---------|-------------|------|
+| 收缩阵列 | 16×16 | 16×16+ | 同量级，内部流水和系统规模仍简化 |
+| AI Core 数量 | 2 | 32 | 16× |
+| 流水线级数 | 2 级 | 10-20 级 | 5-10× |
+| 数据流 | task queue + token wait | 完整 MTE/stream/event 体系 | 简化 |
 
 ---
 

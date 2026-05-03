@@ -1,116 +1,74 @@
 # 项目状态
 
-**最后更新：** 2026-05-03
-**状态：** 100% 完成  
-**测试通过率：** 100% (37/37)
+最后更新：2026-05-03
 
----
+本文是仓库当前功能面的简要索引，不作为发布验收报告。精确测试结果以本地 `sbt test` 输出为准。
 
 ## 核心功能
 
-### NPU (昇腾风格)
-- ✅ 16×16 收缩阵列，256 个 PE 并行计算
-- ✅ 向量单元 (VECADD, RELU)
-- ✅ DMA 引擎，非阻塞，支持 Overlap
-- ✅ 多核并行 (2 个 AiCore)
-- ✅ 四级存储层次 (L0/UB/L2/HBM)
-- ✅ **DMA-Compute Overlap：1.22× 加速比，24.1% 重叠率**
-
-### GPU (英伟达风格)
-- ✅ SIMT 架构，Warp 执行模型
-- ✅ 多 SM (4 个 SM 并行)
-- ✅ 双 Warp 调度器，2× 性能提升
-- ✅ 共享 CUDA Core 架构（符合真实 GPU 设计）
-- ✅ 共享寄存器文件，全局内存访问
-- ✅ **资源利用率：从 6.25% 提升到 25-100%**
-
----
-
-## 性能数据
-
-### NPU - DMA-Compute Overlap
-| 指标 | 顺序执行 | 流水线 Overlap | 提升 |
-|------|---------|---------------|------|
-| 总周期数 | 557 | 455 | **-18.3%** |
-| 重叠周期 | 0 | 52 | **+52** |
-| 重叠率 | 0.0% | **24.1%** | **+24.1%** |
-
-### GPU - 共享架构重构
-| 指标 | 原始架构 | 共享架构 | 提升 |
-|------|---------|---------|------|
-| CUDA Core 数量 | 16 (独立) | 4 (共享) | **4× 减少** |
-| 资源利用率 | 6.25% | 25-100% | **4-16× 提升** |
-| SM 利用率 | N/A | 85.7% | **高效** |
-
----
-
-## 测试状态
-
-```
-总测试数：     62 个
-通过：         62 个 ✅
-失败：         0 个
-通过率：       100% 🎉
-```
-
-**NPU 测试 (28)：** IntegrationTest, CubeCoreTest, PerfCounterTest, OverlapBenchmark, CubeUnitTest, SystolicArrayTest, VectorUnitTest, MultiCoreTest, OverlapTest, LargeMatmulTest 等
-
-**GPU/通用/Benchmark 测试 (34)：** GpuIntegrationTest, DualSchedulerTest, SharedArchDebug, InstructionDispatcherMultiIssueTest, QuickSharedArchTest, CudaCoreTest, LatencyMemTest, MatmulBenchmark 等
-
----
-
-## 文档
-
-**核心文档：**
-- README.md - 项目入口
-- docs/isa.md - 指令集定义
-- docs/performance_comparison.md - 性能对比
-
-**NPU 文档：**
-- docs/npu/architecture.md - NPU 架构
-- docs/npu/dma_overlap.md - DMA Overlap 技术
-- docs/npu/performance_measurement.md - 性能测量
-- docs/npu/ascend_dataflow_design.md - 昇腾式 CopyIn/Compute/CopyOut 数据流思想
-
-**GPU 文档：**
-- docs/gpu/architecture.md - GPU 架构
-- docs/gpu/architecture_comparison.md - 玩具 vs 真实 GPU 对比
-- docs/gpu/shared_architecture_summary.md - 共享架构重构总结
-- docs/gpu/dual_scheduler_summary.md - 双调度器
-- docs/gpu/warp_scheduling.md - Warp 调度
-
----
-
-## 技术亮点
-
 ### NPU
-1. **非阻塞 DMA** - DMA 指令立即返回，不阻塞后续指令
-2. **队列管理** - 4 深度 FIFO 队列，支持多 DMA 并发
-3. **双端口存储** - UB 分离 Scalar 和 DMA 访问
-4. **双缓冲架构** - L0 双缓冲支持计算与加载重叠
+
+- 16x16 Cube tile，256 个 PE，支持 INT8 到 INT32 矩阵乘。
+- L0A/L0B/L0C、UB、L2/HBM 的分层存储模型。
+- MTE1/MTE2/MTE3 三条数据搬运路径，接入 task queue。
+- `WAIT_ALL`、`WAIT_DMA`、`WAIT_COPY_IN`、`WAIT_COPY_OUT` token wait。
+- Control CPU 复用 SPMD block scheduler，支持多个逻辑 block 映射到物理 AiCore。
+- AI CPU 辅助执行 L2 row task。
 
 ### GPU
-1. **共享 CUDA Core** - SM 级别共享资源，符合真实 GPU 架构
-2. **轻量级 Warp** - 只保存执行上下文，不包含物理计算单元
-3. **内存数据缓冲** - 解决连续 LOAD 指令互相覆盖问题
-4. **写端口冲突处理** - 内存写回与算术写回互斥
 
----
+- SIMT warp 执行模型，CTA/thread block 坐标可见。
+- 4 个 SM，支持多 resident CTA。
+- SM 级共享 CUDA Core、共享寄存器文件和双 Warp Scheduler。
+- GlobalMem、SharedMem、SFU、ALU/MEM/SFU issue 计数器。
+- 通过 eligible/stalled/no-eligible 计数观察访存延迟隐藏。
 
-## 与真实硬件对比
+## 当前性能观察
 
-### NPU (vs 昇腾 910)
-| 特性 | 玩具版本 | 真实昇腾 910 | 差距 |
-|------|---------|-------------|------|
-| 收缩阵列 | 16×16 | 16×16+ | 同量级，内部流水和系统规模仍简化 |
-| AI Core | 4 | 32 | 8× |
-| 流水线级数 | 2 级 | 10-20 级 | 5-10× |
-| 重叠率 | 24.1% | 80-90% | 3-4× |
+### NPU 数据流
 
-### GPU (vs NVIDIA A100)
-| 特性 | 玩具版本 | NVIDIA A100 | 差距 |
-|------|---------|-------------|------|
-| SM 数量 | 4 | 108 | 27× |
-| Warp 大小 | 4 | 32 | 8× |
-| 调度器/SM | 2 | 4 | 2× |
-| 架构模型 | ✅ 共享 CUDA Core | ✅ 共享 CUDA Core | **一致** |
+| 场景 | totalCycles | Cube compute | MTE2 DMA | CopyIn | CopyOut | dataflow overlap |
+|---|---:|---:|---:|---:|---:|---:|
+| 单 tile MATMUL | 347 | 46 | 144 | 98 | 16 | 94 |
+| OverlapBenchmark 顺序版 | 1038 | 138 | 432 | 294 | 48 | 282 |
+| OverlapBenchmark 流水版 | 832 | 138 | 432 | 294 | 48 | 282 |
+
+流水版比顺序版少 206 cycles，主要收益来自更早提交下一 tile 的 DMA/CopyIn task。
+
+### GPU 延迟隐藏
+
+| 场景 | total | live warp-cycle | eligible | stalled | no-eligible | MEM issue |
+|---|---:|---:|---:|---:|---:|---:|
+| VADD, `gmemLatency=1` | 39 | 119 | 103 | 16 | 0 | 12 |
+| VADD, `gmemLatency=10` | 50 | 190 | 102 | 88 | 14 | 12 |
+
+`gmemLatency=10` 下 stalled warp-cycle 明显增加，但总周期只增加 11 cycles，说明部分访存等待被其它 ready warp 覆盖。
+
+## 最近验证
+
+```bash
+sbt "testOnly ascend.IntegrationTest ascend.LargeMatmulTest gpu.GpuIntegrationTest"
+sbt "testOnly ascend.Pipeline3Test ascend.TripleBufferTest ascend.OverlapBenchmark"
+```
+
+上述两组命令在 2026-05-03 均通过。
+
+## 主要文档
+
+- `README.md`：项目入口、环境和常用命令。
+- `docs/isa.md`：NPU/GPU 指令格式。
+- `docs/performance_comparison.md`：当前 NPU/GPU toy 模型性能对比。
+- `docs/npu/architecture.md`：NPU 架构。
+- `docs/npu/performance_measurement.md`：NPU 数据流性能计数。
+- `docs/gpu/architecture.md`：GPU 架构。
+- `docs/gpu/warp_scheduling.md`：Warp 调度和延迟隐藏。
+- `docs/ascend_npu_nvidia_gpu_design_philosophy.md`：昇腾 NPU 与 NVIDIA GPU 设计思想。
+
+## 与真实硬件的差距
+
+| 维度 | Toy NPU/GPU | 真实硬件 |
+|---|---|---|
+| 规模 | 2 个 AiCore、4 个 SM、小容量片上存储 | 多十到上百计算单元，完整片上网络和大容量缓存 |
+| 时序 | 教学级 RTL，部分模块有粗略 STA | 经过物理设计、时钟树、SRAM macro 和工艺签核 |
+| 调度 | FIFO/task queue/round-robin 等简化模型 | 多级队列、scoreboard、barrier、NoC、bank conflict 处理 |
+| AI 矩阵单元 | NPU Cube 已建模；GPU 未建模 Tensor Core | 昇腾 Cube 和 NVIDIA Tensor Core 都有完整硬件栈支持 |

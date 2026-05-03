@@ -168,13 +168,3 @@ LD   R0, [R15 + 0]    ; R0 = blockDim.x，例如 8
 MUL  R1, R14, R0      ; R1 = blockIdx.x * blockDim.x
 ADD  R2, R1, R12      ; R2 = global thread id
 ```
-
----
-
-## 构建与测试
-
-```bash
-sbt test                          # 全部测试
-sbt "runMain top.Elaborate"       # 生成 SystemVerilog
-sbt "runMain top.Visualize"       # 渲染 d2 架构图
-```

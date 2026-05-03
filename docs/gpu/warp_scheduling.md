@@ -566,10 +566,10 @@ sbt "testOnly gpu.InstructionDispatcherMultiIssueTest gpu.DualSchedulerTest gpu.
 ### 8.3 学习价值
 
 **本项目展示了**：
-- ✅ Warp 调度的基本原理
-- ✅ Round-Robin 算法的实现
-- ✅ 延迟隐藏的概念
-- ✅ SIMT 执行模型
+- Warp 调度的基本原理
+- Round-Robin 算法的实现
+- 延迟隐藏的概念
+- SIMT 执行模型
 
 **真实 GPU 的额外复杂度**：
 - 更多的 Warp 和更复杂的调度策略

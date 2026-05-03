@@ -1,6 +1,6 @@
 # 交互式架构图
 
-这是 Vibe Processor 项目的交互式架构图查看器，使用 React + D3.js 构建。
+Vibe Processor 的交互式架构图查看器，使用 React + D3.js 构建。
 
 ## 功能特性
 
@@ -20,16 +20,6 @@
 - **悬停提示**：鼠标悬停在模块上显示详细元数据（容量、延迟、源文件路径）
 - **架构切换**：顶部按钮一键切换 NPU 和 GPU 架构
 
-### 4. 数据流动画（开发中）
-- 可视化数据在存储层次间的流动
-- 路径：HBM → L2 → DMA → UB → CubeUnit
-- 支持播放/暂停控制
-
-### 5. 性能数据可视化（开发中）
-- 叠加性能计数器数据
-- 热力图显示模块利用率
-- 支持从测试运行加载实际性能数据
-
 ## 使用方法
 
 ### 在线查看
@@ -43,9 +33,6 @@ cd docs/interactive
 python3 -m http.server 8000
 # 访问 http://localhost:8000
 ```
-
-### 部署到 GitHub Pages
-将 `docs/interactive/index.html` 推送到 GitHub，在仓库设置中启用 GitHub Pages（选择 `docs` 目录）。
 
 ## 架构配置
 
@@ -151,15 +138,6 @@ web/
 ├── vite.config.js
 └── index.html
 ```
-
-## 扩展方向
-
-- [ ] 从 Scala 代码自动生成 JSON 配置
-- [ ] 支持参数配置面板（动态调整 ArraySize、NumCores）
-- [ ] 集成波形图显示
-- [ ] 支持导出为 PNG/SVG
-- [ ] 添加搜索和过滤功能
-- [ ] 多架构对比视图
 
 ## 许可证
 

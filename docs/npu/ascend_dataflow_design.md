@@ -179,4 +179,4 @@ CopyOutQueue -> MTE3 -> UB
 用 event/token 保证只在必要边界等待。
 ```
 
-本项目现在已经把全局 `DMA_WAIT` 细化成数据流 token，并把 MTE1/MTE2/MTE3 接入 task queue。这样学生能直接看到真实 NPU 最核心的思想：**显式数据流编排比单个计算单元更重要**。
+本项目已经把全局 `DMA_WAIT` 细化成数据流 token，并把 MTE1/MTE2/MTE3 接入 task queue。该模型强调：显式数据流编排与计算阵列同等重要。

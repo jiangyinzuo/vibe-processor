@@ -1,82 +1,33 @@
-# SFU 实现状态
+# SFU 状态记录
+
+本文保留 SFU 集成工作的最终状态，替代早期“正在测试”的临时记录。
 
 ## 当前状态
 
-**正在运行测试**: `sbt "testOnly gpu.SFUTest gpu.SFUDebugTest gpu.SFUIntegrationTest"`
+- `EXP` 指令已接入 GPU ISA，opcode 为 `0x8`。
+- `SFU.scala` 使用 Q16.16 定点数、65 项查找表和线性插值计算 `e^x`。
+- SFU 延迟为 1 周期，与 CudaCore 写回路径对齐。
+- `SMSubPartition` 使用延迟后的 `isExpInstr` 选择 SFU 结果，避免控制信号与数据路径错位。
+- 查找表索引宽度已限制为 7 bit，避免动态索引宽度告警。
 
-## 已完成的修复
+## 已修复问题
 
-### 1. 查找表值修正 ✅
-- 重新生成了正确的 65 个 e^x 查找表值
-- 使用 Python 脚本生成 Q16.16 格式的值
+| 问题 | 修复 |
+|---|---|
+| 查找表值错误 | 重新生成 `e^-8` 到 `e^8` 的 Q16.16 LUT |
+| EXP 未进入写回逻辑 | 在 dispatcher 写回记录中纳入 `GpuOpcode.EXP` |
+| SFU 延迟与写回不匹配 | 将 SFU 简化为 1 周期延迟 |
+| `isExpInstr` 与 SFU 输出错位 | 对控制信号打一拍，与 SFU 输出对齐 |
+| LUT 动态索引过宽 | clamp 后取 `index_raw(6, 0)` |
 
-### 2. 写回逻辑修复 ✅
-- 在 InstructionDispatcher 的写回逻辑中添加了 EXP 指令处理
-- 确保 EXP 指令的 rd 被正确记录
+## 验证入口
 
-### 3. SFU 延迟简化 ✅
-- 从 3 周期流水线简化为 1 周期延迟
-- 与 CUDA Core 延迟保持一致
-
-### 4. 时序匹配修复 ✅
-- 添加 `isExpInstrRegVec` 延迟信号
-- 确保结果选择逻辑与 SFU 延迟匹配
-
-### 5. 索引宽度优化 ✅
-- 限制查找表索引为 7 位宽
-- 消除编译警告（待验证）
-
-## 预期测试结果
-
-### SFUTest (4 个测试)
-- ✅ e^0 = 1.0
-- ✅ e^1 ≈ 2.718
-- ✅ e^-1 ≈ 0.368
-- ✅ 无效输入输出 0
-
-### SFUDebugTest (2 个测试)
-- ✅ 简单 EXP 测试（已通过）
-- 🔄 EXP + STORE 测试（之前失败，现在应该通过）
-
-### SFUIntegrationTest (1 个测试)
-- 🔄 完整的 LD -> EXP -> ST 流程（之前失败，现在应该通过）
-
-## 关键修复
-
-### 时序不匹配问题
-
-**问题**: `isExpInstr` 信号在当前周期计算，但 SFU 有 1 周期延迟
-
-**解决方案**:
-```scala
-val isExpInstrVec = Wire(Vec(numCores, Bool()))
-val isExpInstrRegVec = RegNext(isExpInstrVec)  // 延迟 1 周期
-
-// 结果选择使用延迟后的信号
-dispatcher.io.coreDone(i) := Mux(isExpInstrRegVec(i), sfuDone, cudaCores(i).io.done)
-dispatcher.io.coreRd(i) := Mux(isExpInstrRegVec(i), sfuResult, cudaCores(i).io.rd)
+```bash
+sbt "testOnly gpu.SFUTest gpu.SFUDebugTest gpu.SFUIntegrationTest"
 ```
 
-## 文档
+相关文档：
 
-已创建的文档：
-- `docs/gpu/sfu.md` - SFU 技术文档
-- `docs/gpu/sfu_implementation_summary.md` - 实现总结
-- `docs/gpu/sfu_timing_fix.md` - 时序修复详解
-- `docs/gpu/sfu_complete_implementation.md` - 完整实现记录
-- `docs/gpu/sfu_status.md` - 本文档
-
-## 下一步
-
-1. 等待测试完成
-2. 验证所有测试通过
-3. 如果测试失败，继续调试
-4. 如果测试通过，运行完整测试套件验证没有破坏其他功能
-5. 创建 git commit 提交 SFU 实现
-
-## 测试运行时间
-
-- 开始时间: 14:39
-- 当前时间: ~14:41
-- 已运行: ~2 分钟
-- 预计总时间: 5-8 分钟（包括 Verilator 编译）
+- [SFU 技术文档](sfu.md)
+- [SFU 时序修复](sfu_timing_fix.md)
+- [写回逻辑 Bug 修复](writeback_bug_fix.md)

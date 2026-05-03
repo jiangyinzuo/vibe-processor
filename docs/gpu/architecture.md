@@ -6,7 +6,7 @@
 
 使用 Chisel 7 (Scala) 编写，Verilator (via svsim) 仿真，ScalaTest 验证。
 
-**[🔗 交互式架构图](../interactive/index.html)** - 可视化 GPU 架构，支持模块导航和 Warp 调度动画
+**[交互式架构图](../interactive/index.html)** - 可视化 GPU 架构，支持模块导航和 Warp 调度动画
 
 ---
 
@@ -160,9 +160,9 @@ scheduler.io.warpHalted(w) :=
 ```
 
 **关键特点**：
-- ✅ Warp **主动**让出时间片（协作式）
-- ✅ 调度器**不会强制抢占**
-- ✅ 在访存时切换，实现延迟隐藏
+- Warp **主动**让出时间片（协作式）
+- 调度器**不会强制抢占**
+- 在访存时切换，实现延迟隐藏
 
 详见 [warp_scheduling.md](warp_scheduling.md#协作式调度)
 

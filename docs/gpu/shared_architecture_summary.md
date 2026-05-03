@@ -1,132 +1,78 @@
-# GPU 共享架构重构总结
+# GPU 共享执行资源模型
 
-## 重构动机
+本文记录 GPU 模型从每个 warp 独占执行单元改为 SM 共享执行资源后的结构。
 
-**原始设计问题：**
-- 每个 Warp 包含独立的 CUDA Core（ALU + 寄存器文件）
-- 资源利用率极低：4 Warp × 4 CUDA Core = 16 ALU，但同时只有 1 个 Warp 活跃（利用率 6.25%）
-- 与真实 GPU 架构不符
+## 动机
 
-**真实 GPU 架构：**
-- CUDA Core 是 SM 级别的共享资源
-- Warp 只是轻量级的执行上下文（PC、寄存器状态）
-- 调度器从多个 Ready Warp 中选择一个，使用共享的 CUDA Core 执行
-- 多个 Warp 时分复用同一组 CUDA Core
+早期模型把 CUDA Core 和寄存器文件放在每个 Warp 内部。该结构简单，但会把 warp 误表达为“拥有物理 ALU 的硬件块”。真实 GPU 中，warp 是执行上下文，CUDA Core、SFU、load/store 等执行资源属于 SM 或 SM 分区。
 
-## 新架构设计
+## 当前结构
 
-### 核心模块
+### WarpContext
 
-#### 1. WarpContext（轻量级执行上下文）
+`WarpContext` 保存轻量状态：
+
 ```scala
-class WarpContext(warpWidth: Int) extends Bundle {
-  val state = WarpState()           // Idle/Ready/WaitMem/Halted
-  val pc = UInt(32.W)               // 程序计数器
-  val memWaitCounter = UInt(8.W)   // 内存等待计数器
-  val memRdData = Vec(warpWidth, UInt(32.W))  // 内存读取数据缓冲
-}
+state
+pc
+memWaitCounter
+memRdData
 ```
 
-- 不包含寄存器文件和 ALU，只保存执行状态和控制信息
-- 内存数据缓冲解决组合逻辑读取问题
+它不包含 ALU 或私有寄存器文件。
 
-#### 2. SharedRegisterFile（共享寄存器文件）
+### SharedRegisterFile
+
+`SharedRegisterFile` 集中保存所有 warp 的寄存器：
+
 ```scala
-class SharedRegisterFile(numRegs: Int, warpWidth: Int, numWarps: Int) extends Module {
-  val regs = Reg(Vec(numWarps, Vec(numRegs, Vec(warpWidth, UInt(32.W)))))
-  // 多端口访问：2个读端口 + warpWidth个写端口
-}
+regs(warpId)(regId)(laneId)
 ```
 
-- 所有 Warp 的寄存器集中管理
-- 支持多端口并行写回（内存写回 + 算术指令写回）
-- 通过 warpId 索引访问对应 Warp 的寄存器
+dispatcher 通过 `warpId` 选择对应上下文的寄存器。
 
-#### 3. InstructionDispatcher（指令分发器）
-- 从选中的 Warp 读取指令并解码
-- 单周期执行算术/逻辑指令
-- 内存指令设置等待状态，延迟写回
-- 检测写端口冲突，避免同时写回
+### InstructionDispatcher
 
-#### 4. SMSubPartition（SM 内部分区）
-- 每个分区包含 1 个 WarpScheduler
-- 每个分区管理一组本地 WarpContext
-- 每个分区拥有一组 lane 执行单元（CudaCore + SFU）
-- 分区输出一个被选中的全局 warpId，交给 SM 顶层的 InstructionDispatcher
+dispatcher 负责：
 
-#### 5. SM（共享架构 SM）
-**执行流程：**
-1. 每个 SMSubPartition 的 Round-robin 调度器选择 Ready 状态的 Warp
-2. Dispatcher 读取指令并执行
-3. 从 SharedRegisterFile 读取操作数
-4. 使用对应 sub-partition 的 CudaCore/SFU 执行运算
-5. 发起全局内存读写请求
-6. 结果写回 SharedRegisterFile
+- 读取 selected warp 的指令。
+- 读取源寄存器。
+- 向 CudaCore、SFU 或 memory path 发射。
+- 处理写回和写端口冲突。
 
-### 关键设计决策
+### SMSubPartition
 
-#### 1. 内存数据缓冲
-**问题：** 连续 LOAD 指令互相覆盖数据（内存读取使用组合逻辑，写回时地址已变化）
+每个 sub-partition 拥有一个 scheduler 和一组 lane 执行单元。两个 sub-partition 共同构成当前 SM 的双调度器模型。
 
-**解决：** 在 WarpContext 中添加 `memRdData` 缓冲，内存请求发起时立即锁存数据
+## 关键修复
 
-#### 2. 写端口冲突处理
-**问题：** 内存写回和算术指令写回可能同时发生
+### 内存数据缓冲
 
-**解决：** 当有内存写回时，禁止 Dispatcher 发射新指令
+连续 LOAD 曾经因为组合读数据被后续地址覆盖。当前在 `WarpContext.memRdData` 中保存返回数据，再进入写回。
 
-#### 3. 寄存器读取时机
-**问题：** LOAD/STORE 指令需要先读取 rs1 寄存器获取地址
+### 写端口冲突
 
-**解决：** 在 SM 中提前读取寄存器，传递给 Dispatcher
+当内存写回与算术写回可能同周期发生时，dispatcher 需要仲裁，避免同一周期覆盖目标寄存器。
 
-## 性能对比
+## 资源利用率
 
-### 资源利用率
-| 架构 | CUDA Core 数量 | 活跃 Warp | 利用率 |
-|------|---------------|-----------|--------|
-| 原始（独立） | 16 (4 Warp × 4 Core) | 1 | 6.25% |
-| 新架构（2 分区） | 8 (2 × 4 Core) | 1 | 50% |
-| 理论最大 | 8 (2 × 4 Core) | 2 | 100% |
+| 架构 | CUDA Core 数量 | 同周期可活跃 warp | 说明 |
+|---|---:|---:|---|
+| 早期独占模型 | `numWarps x warpWidth` | 1 | 大部分 ALU 闲置 |
+| 当前共享模型 | `numSubPartitions x warpWidth` | 最多 2 | 更接近 SM 分区共享 |
 
-### 测试结果
-**4-SM 向量加法：**
-- 执行周期：14 cycles
-- 结果：[11, 22, 33, 44] ✅
-- SM 利用率：85.7% (12/14 周期活跃)
+## 测试
 
-**测试通过率：16/16 (100%)**
-- GpuIntegrationTest (3/3)
-- DualSchedulerTest (4/4)
-- SharedArchDebug (3/3)
-- QuickSharedArchTest (1/1)
-- CudaCoreTest (5/5)
+常用验证：
 
-## 代码变更
+```bash
+sbt "testOnly gpu.GpuIntegrationTest gpu.DualSchedulerTest"
+```
 
-### 共享架构保留文件
+相关源码：
+
 - `src/main/scala/gpu/WarpContext.scala`
 - `src/main/scala/gpu/SharedRegisterFile.scala`
 - `src/main/scala/gpu/InstructionDispatcher.scala`
 - `src/main/scala/gpu/SMSubPartition.scala`
 - `src/main/scala/gpu/SM.scala`
-- `src/test/scala/gpu/SharedArchDebug.scala`
-- `src/test/scala/gpu/QuickSharedArchTest.scala`
-
-### 修改文件
-- `src/main/scala/gpu/ToyGpuTop.scala` - 使用共享架构 SM
-
-### 移除旧实现
-- 旧版每 Warp 独占执行单元模块
-- 旧版双架构兼容接口
-
-## 总结
-
-成功将玩具 GPU 从"每个 Warp 独立 CUDA Core"的错误设计，改为"共享 CUDA Core + 轻量级 Warp 上下文"的正确架构：
-
-- ✅ 符合真实 GPU 设计原则
-- ✅ 资源利用率从 6.25% 提升到 25%（单 Warp）/ 100%（理论最大）
-- ✅ 所有测试通过，功能正确
-- ✅ 性能计数器正确统计周期和内存访问
-
-为后续实现更复杂的 GPU 特性（多 Warp 并发、分支处理、共享内存）奠定了坚实基础。

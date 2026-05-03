@@ -66,6 +66,6 @@ OverlapBenchmark 流水版比顺序版少 206 cycles：
 - token scoreboard 仍是队列级 pending，不是 tile id/address 级事件。
 - 没有建模 UB/L2 bank conflict、NoC、stream、真实格式转换和 Fixpipe。
 
-## 教学结论
+## 结论
 
-当前结果说明：只增加 Cube 并不能自动获得高利用率。昇腾式 NPU 的关键是把数据搬运、片上缓存复用和 token 同步显式编排成流水线。这个 toy 项目现在能观察到这条规律：**MTE task queue 决定数据能否及时到达，Cube 决定数据到达后的峰值吞吐**。
+只增加 Cube 不能自动提高端到端利用率。当前数据表明，MTE task queue 决定数据能否及时到达，Cube 决定数据到达后的峰值吞吐。

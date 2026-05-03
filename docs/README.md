@@ -1,261 +1,109 @@
 # Vibe Processor 文档索引
 
-## 📚 项目概述
-
-本项目包含两个教学用 AI 加速器的 RTL 实现：
-
-- **玩具版昇腾 NPU** — Control CPU + AI CPU + SPMD block 调度 + 2×AiCore，收缩阵列 + DMA + 三级存储层次
-- **玩具版英伟达 GPU** — 4×SM，CTA/thread block 层 + SIMT 执行模型 + 双 Warp 调度器
-
-使用 Chisel 7 (Scala) 编写，Verilator (via svsim) 仿真，ScalaTest 验证。
-
-**[🔗 交互式架构图](interactive/index.html)** - 可视化 NPU 和 GPU 架构
-
----
-
-## 📖 文档结构
-
-### NPU 文档
-
-```
-docs/npu/
-├── architecture.md              # NPU 架构详解
-├── ascend_dataflow_design.md    # 昇腾式数据流设计思想
-├── cubecore_realism_optimization.md # CubeCore 真实化优化
-├── event_token_synchronization.md   # event/token 细粒度同步教程
-├── dma_overlap.md               # DMA-Compute Overlap 优化
-├── mte_task_queue_data_movement.md  # MTE task queue 数据流教程
-├── fractal_tile_format.md       # 16x16 分形 tile 格式
-├── pe_mac_pipeline.md           # PE MAC 两级流水化
-├── pipeline_timing_analysis.md  # NPU 流水线时序分析
-└── performance_measurement.md   # 实际性能测量报告
-```
-
-**快速链接**：
-- [NPU 架构](npu/architecture.md) - Control CPU、AI CPU、SPMD block、收缩阵列、DMA、多核并行
-- [昇腾式数据流设计思想](npu/ascend_dataflow_design.md) - CopyIn/Compute/CopyOut、task queue、token wait
-- [CubeCore 真实化优化](npu/cubecore_realism_optimization.md) - Cube 输入快照、L0C 累加和前后性能对比
-- [event/token 同步](npu/event_token_synchronization.md) - 细粒度 WAIT、token scoreboard、UB 复用边界
-- [MTE task queue 数据流](npu/mte_task_queue_data_movement.md) - CopyIn/DMA/CopyOut 队列化与数据搬运一等公民
-- [分形 Tile 格式](npu/fractal_tile_format.md) - 16x16 Cube tile、pack/unpack、tail padding
-- [PE MAC 流水化](npu/pe_mac_pipeline.md) - PE 乘法/加法拆分和阵列时序
-- [DMA Overlap](npu/dma_overlap.md) - 非阻塞 DMA、双缓冲、性能优化
-- [NPU 流水线时序分析](npu/pipeline_timing_analysis.md) - Yosys LTP、OpenSTA 粗估和切分优先级
-- [性能测量](npu/performance_measurement.md) - 实际加速比 1.22×，重叠率 24.1%
-- [频率与周期联合评估](frequency_performance.md) - OpenSTA Fmax 粗估和 runtime 换算
-
-### GPU 文档
-
-```
-docs/gpu/
-├── architecture.md              # GPU 架构详解
-├── warp_scheduling.md           # Warp 调度机制详解
-└── dual_scheduler_summary.md    # 双调度器实现总结
-```
-
-**快速链接**：
-- [GPU 架构](gpu/architecture.md) - CTA/thread block、SIMT、Warp 调度、双调度器
-- [Warp 调度](gpu/warp_scheduling.md) - Round-Robin、协作式调度、延迟隐藏
-- [双调度器](gpu/dual_scheduler_summary.md) - 2-3× 性能提升
-
-### 对比分析
-
-```
-docs/
-├── performance_comparison.md    # NPU vs GPU 性能对比
-├── ascend_npu_nvidia_gpu_design_philosophy.md # 昇腾 NPU 与 NVIDIA GPU 设计思想
-├── frequency_performance.md     # cycles × Fmax 运行时间估算
-└── isa.md                       # 指令集说明
-```
-
-**快速链接**：
-- [性能对比](performance_comparison.md) - 矩阵乘法性能分析
-- [设计思想](ascend_npu_nvidia_gpu_design_philosophy.md) - 从第一性原理解释昇腾 NPU 与 NVIDIA GPU
-- [频率与周期联合评估](frequency_performance.md) - cycles × Fmax 运行时间估算
-- [指令集](isa.md) - NPU 和 GPU 指令格式
-
-### 交互式文档
-
-```
-docs/interactive/
-├── index.html                   # 交互式架构图
-└── README.md                    # 使用说明
-```
-
-**快速链接**：
-- [交互式架构图](interactive/index.html) - 可视化架构，支持模块导航
-
----
-
-## 🗺️ 阅读路径
-
-### 快速入门（30 分钟）
-
-1. 本文档 - 了解项目结构
-2. [交互式架构图](interactive/index.html) - 可视化架构
-3. [指令集](isa.md) - 了解指令格式
-
-### 深入理解 NPU（1.5 小时）
-
-1. [NPU 架构](npu/architecture.md) - Control CPU、AI CPU、SPMD block、收缩阵列、DMA、多核
-2. [DMA Overlap](npu/dma_overlap.md) - 非阻塞 DMA、双缓冲优化
-3. [event/token 同步](npu/event_token_synchronization.md) - 细粒度 WAIT 和 token scoreboard
-4. [MTE task queue 数据流](npu/mte_task_queue_data_movement.md) - 数据搬运一等公民
-5. [CubeCore 真实化优化](npu/cubecore_realism_optimization.md) - Cube 输入快照、L0C 累加
-6. [性能对比](performance_comparison.md) - 性能分析
-7. [频率与周期联合评估](frequency_performance.md) - cycles × Fmax 估算运行时间
+本目录记录教学级 NPU/GPU RTL 的架构、ISA、性能、时序和设计思想。交互式架构图见 [interactive/index.html](interactive/index.html)。
 
-### 深入理解 GPU（1.5 小时）
+## 架构要点
 
-1. [GPU 架构](gpu/architecture.md) - SIMT、双调度器
-2. [Warp 调度](gpu/warp_scheduling.md) - 调度算法详解
-3. [双调度器](gpu/dual_scheduler_summary.md) - 性能提升
-4. [设计思想](ascend_npu_nvidia_gpu_design_philosophy.md) - 从第一性原理理解 GPU 与 NPU 的不同目标函数
-5. [性能对比](performance_comparison.md) - 与 NPU 对比
+### GPU
 
-### 性能优化（45 分钟）
+- CTA/thread block、warp、SM 和共享寄存器文件。
+- SM 级共享 CUDA Core，warp 只保存执行上下文。
+- 双 Warp Scheduler 通过 ready/stalled 切换隐藏访存延迟。
+- SFU 支持 EXP，ALU/SFU/MEM issue 计数可观测。
 
-1. [DMA Overlap](npu/dma_overlap.md) - 计算与传输重叠
-2. [性能对比](performance_comparison.md) - 瓶颈分析
-3. [双调度器](gpu/dual_scheduler_summary.md) - 并行优化
-4. [event/token 同步](npu/event_token_synchronization.md) - 真实硬件式 token wait
-5. [MTE task queue 数据流](npu/mte_task_queue_data_movement.md) - 真实硬件式 MTE 队列
-6. [CubeCore 真实化优化](npu/cubecore_realism_optimization.md) - 真实硬件优化
+## 当前性能观察
 
----
+- NPU `OverlapBenchmark` 流水版相对顺序版少 206 cycles，平均每 tile 从 346.0 cycles 降至 277.3 cycles。
+- GPU VADD 在 `gmemLatency=10` 下有 88 个 stalled warp-cycle，但只有 14 个 no-eligible cycles。
 
-## 📊 文档统计
+详见 [性能对比](docs/performance_comparison.md) 和 [项目状态](PROJECT_STATUS.md)。
 
-| 类别 | 文档数 | 总行数 |
-|------|--------|--------|
-| **NPU** | 10 | - |
-| **GPU** | 3 | 1035 |
-| **对比** | 2 | 404 |
-| **交互** | 1 | - |
-| **总计** | 8 | 2047 |
+## 与真实硬件的差距
 
----
+### GPU (vs NVIDIA A100)
 
-## 🎯 快速查找
+| 特性 | 玩具版本 | NVIDIA A100 | 差距 |
+|------|---------|-------------|------|
+| SM 数量 | 4 | 108 | 27× |
+| Warp 大小 | 4 | 32 | 8× |
+| 调度器/SM | 2 | 4 | 2× |
+| 架构模型 | 共享 CUDA Core | 共享 CUDA Core | **一致** |
 
-### 我想了解...
+- [ISA 指令集](isa.md)
+- [NPU 架构](npu/architecture.md)
+- [GPU 架构](gpu/architecture.md)
+- [性能对比](performance_comparison.md)
 
-**NPU 相关**：
-- NPU 的收缩阵列如何工作？→ [NPU 架构](npu/architecture.md#4-收缩阵列)
-- 什么是 Cube 分形 tile 格式？→ [分形 Tile 格式](npu/fractal_tile_format.md)
-- PE 内部 MAC 为什么要流水化？→ [PE MAC 流水化](npu/pe_mac_pipeline.md)
-- 昇腾为什么强调 CopyIn/Compute/CopyOut？→ [昇腾式数据流设计思想](npu/ascend_dataflow_design.md)
-- NPU 的 SPMD blockDim/blockIdx 如何工作？→ [NPU 架构](npu/architecture.md#2-spmd-编程模型)
-- NPU 的 DMA 机制？→ [NPU 架构](npu/architecture.md#3-存储层次)
-- 玩具 NPU 和真实昇腾的差距？→ [NPU 架构：与真实昇腾的差异](npu/architecture.md#8-与真实昇腾的差异)
+### NPU 数据流
 
-**GPU 相关**：
-- GPU 的 CTA/thread block 如何映射到 SM？→ [GPU 架构](gpu/architecture.md#2-cta--thread-block-层)
-- GPU 的 Warp 调度机制？→ [Warp 调度](gpu/warp_scheduling.md)
-- 什么是协作式调度？→ [Warp 调度](gpu/warp_scheduling.md#协作式调度)
-- 双调度器如何提升性能？→ [双调度器](gpu/dual_scheduler_summary.md)
+1. [昇腾式数据流设计思想](npu/ascend_dataflow_design.md)
+2. [MTE task queue 数据流](npu/mte_task_queue_data_movement.md)
+3. [event/token 同步](npu/event_token_synchronization.md)
+4. [MTE-Compute Overlap](npu/dma_overlap.md)
+5. [NPU 数据流性能测量](npu/performance_measurement.md)
 
-**性能对比**：
-- 为什么 NPU 比 GPU 快？→ [性能对比](performance_comparison.md)
-- NPU 和 GPU 的根本设计思想有什么不同？→ [设计思想](ascend_npu_nvidia_gpu_design_philosophy.md)
-- 大矩阵性能如何？→ [性能对比](performance_comparison.md#16×16-矩阵乘法)
+### NPU Cube 与时序
 
-**指令和测试**：
-- 指令格式是什么？→ [指令集](isa.md)
-- 如何运行测试？→ [NPU 架构](npu/architecture.md#9-测试) / [GPU 架构](gpu/architecture.md#8-测试)
+1. [Cube 分形 Tile 格式](npu/fractal_tile_format.md)
+2. [PE MAC 流水化](npu/pe_mac_pipeline.md)
+3. [CubeCore 真实化优化](npu/cubecore_realism_optimization.md)
+4. [NPU 流水线时序分析](npu/pipeline_timing_analysis.md)
+5. [频率与周期联合评估](frequency_performance.md)
 
----
+### GPU 调度与执行
 
-## 🔗 相关资源
+1. [Warp 调度](gpu/warp_scheduling.md)
+2. [双调度器实现](gpu/dual_scheduler_summary.md)
+3. [共享 CUDA Core 架构](gpu/shared_architecture_summary.md)
+4. [GPU 流水线时序分析](gpu/pipeline_timing_analysis.md)
+5. [SFU 技术文档](gpu/sfu.md)
 
-### 源代码
+### 体系结构对比
 
-```
-src/main/scala/
-├── ascend/          # NPU 实现
-├── gpu/             # GPU 实现
-├── common/          # 共享组件
-└── top/             # 顶层和工具
-```
+1. [昇腾 NPU 与 NVIDIA GPU 设计思想](ascend_npu_nvidia_gpu_design_philosophy.md)
+2. [NPU 与 GPU 性能对比](performance_comparison.md)
+3. [GPU 架构对比](gpu/architecture_comparison.md)
 
-### 测试
+## 文档清单
 
-```
-src/test/scala/
-├── ascend/          # NPU 测试，包含 AiCpu/SPMD/Cube/Vector/MTE
-├── gpu/             # GPU 测试 (包含 CTA/thread ID 集成测试)
-└── common/          # 共享组件测试 (4 cases)
-```
+### 根目录
 
-### 图表
+- `isa.md`：NPU/GPU 指令格式。
+- `performance_comparison.md`：当前 toy 模型的性能对比和可比性边界。
+- `frequency_performance.md`：cycles 与 Fmax 的联合估算。
+- `ascend_npu_nvidia_gpu_design_philosophy.md`：从第一性原理解释两类芯片的设计思想。
 
-```
-docs/
-├── diagrams/        # 架构图 (SVG)
-├── schematics/      # 电路图 (SVG)
-└── interactive/     # 交互式架构图 (HTML)
-```
+### `docs/npu/`
 
----
+- `architecture.md`：NPU 顶层架构、SPMD、存储、Cube、MTE 和性能计数器。
+- `ascend_dataflow_design.md`：CopyIn/Compute/CopyOut 数据流思想。
+- `mte_task_queue_data_movement.md`：MTE task queue 和数据搬运建模。
+- `event_token_synchronization.md`：WAIT selector、token scoreboard 和 UB 复用边界。
+- `dma_overlap.md`：MTE 与 Cube 的重叠机制。
+- `performance_measurement.md`：当前数据流性能结果。
+- `fractal_tile_format.md`：16x16 tile、pack/unpack 和 tail padding。
+- `pe_mac_pipeline.md`：PE 乘法/加法流水。
+- `cubecore_realism_optimization.md`：Cube 输入快照与 L0C 累加。
+- `pipeline_timing_analysis.md`：Yosys LTP 与 OpenSTA 粗估。
 
-## 🚀 快速开始
+### `docs/gpu/`
 
-### 构建和测试
+- `architecture.md`：CTA/thread block、SM、warp、寄存器和存储层次。
+- `warp_scheduling.md`：Round-robin、协作式调度和延迟隐藏。
+- `dual_scheduler_summary.md`：双 Warp Scheduler 的实现和计数器结果。
+- `shared_architecture_summary.md`：共享 CUDA Core 重构。
+- `architecture_comparison.md`：历史独占执行单元模型与当前共享模型的差异。
+- `sfu.md`：EXP SFU 的实现和 ISA。
+- `sfu_timing_fix.md`、`writeback_bug_fix.md`：SFU 集成过程中的时序与写回问题。
+- `pipeline_timing_analysis.md`：GPU 侧时序粗估。
 
-```bash
-# 运行所有测试
-sbt test
+### `docs/interactive/`
 
-# NPU 测试
-sbt "testOnly ascend.*"
+- `index.html`：单文件交互式架构图。
+- `README.md`：交互式架构图的开发和使用说明。
 
-# GPU 测试
-sbt "testOnly gpu.*"
+## 维护规则
 
-# 生成 Verilog
-sbt "runMain top.Elaborate"
-```
-
-### 查看架构图
-
-```bash
-# 交互式架构图
-open docs/interactive/index.html
-
-# 静态架构图
-open docs/diagrams/npu_architecture.svg
-open docs/diagrams/gpu_architecture.svg
-```
-
----
-
-## 📝 文档维护
-
-### 文档组织原则
-
-1. **按架构分类**：NPU 和 GPU 文档分别组织
-2. **避免重复**：相同内容只在一个文档中详细说明
-3. **清晰引用**：使用链接引用其他文档
-4. **分层组织**：架构文档概览，专题文档深入
-
-### 文档更新检查清单
-
-- [ ] 代码更新时同步更新文档
-- [ ] 新增功能时更新架构文档
-- [ ] 性能变化时更新性能对比
-- [ ] 添加新文档时更新本索引
-
----
-
-## 📧 反馈
-
-如果发现文档问题或有改进建议，请提交 Issue 或 Pull Request。
-
----
-
-## 📚 文档历史
-
-- **2024-04**: 初始版本
-- **2024-04**: 添加交互式架构图
-- **2024-04**: 实现双调度器，更新 GPU 文档
-- **2024-04**: 文档重组，按 NPU/GPU 分类
+- 性能数字更新时同步修改 `performance_comparison.md`、`PROJECT_STATUS.md` 和对应专题文档。
+- 新增文档时在本索引添加入口。
+- 对历史调试记录保留原因、修复和验证结果；删除“正在进行”“预计通过”等过时状态描述。

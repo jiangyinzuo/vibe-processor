@@ -1,331 +1,196 @@
-# NPU vs GPU 矩阵乘法性能对比分析（更新版）
+# NPU 与 GPU 性能对比分析
 
-## 测试场景
+## 1. 比较基准
 
-### 小矩阵：4×4 矩阵乘法
-**测试数据**：
-```
-A = [[1, 2, 3, 4],      W = [[1, 0, 2, 1],
-     [5, 6, 7, 8],           [3, 1, 0, 2],
-     [2, 3, 1, 4],           [2, 4, 1, 3],
-     [7, 1, 5, 3]]           [0, 2, 3, 1]]
+本文比较的是本仓库中的教学级 NPU/GPU 模型，不是昇腾或 NVIDIA 真实芯片的性能定标。
 
-C = A × W = [[17, 18, 15, 18],
-             [45, 42, 35, 46],
-             [15, 15, 11, 16],
-             [24, 29, 24, 28]]
-```
+| 项目 | 内容 |
+|---|---|
+| 代码基准 commit | `5c1aa910219a0f3d17f23712690ce68f54393a62` |
+| 短 commit | `5c1aa91` |
+| commit 时间 | `2026-05-03 14:56:32 +0800` |
+| commit 说明 | `Implement NPU dataflow task queues and token waits` |
+| 主要测试命令 | `sbt "testOnly ascend.IntegrationTest ascend.LargeMatmulTest gpu.GpuIntegrationTest"` |
+| 补充测试命令 | `sbt "testOnly ascend.Pipeline3Test ascend.TripleBufferTest ascend.OverlapBenchmark"` |
 
-### 大矩阵：16×16 矩阵乘法（Tiling 分析）
-- 使用 4×4 SystolicArray 分块计算
-- 16×16 矩阵分解为 4×4 = 16 个 4×4 块
-- 每个输出块需要 4 次 MATMUL + 3 次 VECADD
+测试结果：上述两组命令均通过。第一组运行 9 个测试，第二组运行 4 个测试。
 
----
+需要特别说明：当前 NPU 模型已经实现 16x16 Cube tile、MTE task queue 和 token wait；当前 GPU 模型主要用于观察 SIMT/warp 调度和访存延迟隐藏，尚未实现 Tensor Core，也没有完整的 GPU 矩阵乘 kernel。因此，本文不能把 NPU 的矩阵乘周期与 GPU 的向量加法周期直接解释为真实硬件的矩阵性能排名。
 
-## NPU (昇腾) 性能分析
+## 2. 当前模型边界
 
-### 架构特点
-- **计算单元**：4×4 SystolicArray (16 个 PE)
-- **数据流**：Weight-Stationary（权重固定，激活流动）
-- **内存层次**：HBM → L2 → UB → L0 (actBuf/weightBuf)
-- **数据搬运**：显式 DMA 指令
+| 维度 | Toy NPU | Toy GPU |
+|---|---|---|
+| 主要目标 | 16x16 tile 矩阵乘与显式数据流 | SIMT warp 调度与访存延迟隐藏 |
+| 计算单元 | 16x16 SystolicArray，256 个 PE | 4 个 SM，每个 warp 4 个线程 |
+| 专用矩阵单元 | Cube 路径已建模 | 未建模 Tensor Core |
+| 数据搬运 | MTE1 CopyIn、MTE2 DMA、MTE3 CopyOut | GlobalMem、SharedMem、RegFile |
+| 同步机制 | `WAIT_ALL` / `WAIT_DMA` / `WAIT_COPY_IN` / `WAIT_COPY_OUT` | warp ready/stall 调度 |
+| 主要观察指标 | tile 周期、MTE/Cube 重叠、等待气泡 | live/eligible/stalled warp-cycle |
 
-### 4×4 矩阵性能数据（单核）
+## 3. NPU：16x16 矩阵乘实测
 
-| 指标 | 数值 | 说明 |
-|------|------|------|
-| **总周期数** | 107 | start → halted 总耗时 |
-| **Cube 计算周期** | 16 | SystolicArray 有效计算时间 |
-| **DMA 周期** | 36 | 数据搬运耗时 (2×LOAD + 1×STORE) |
-| **气泡周期** | 55 | Scalar 等待 Cube/DMA 的空闲周期 |
-| **计算效率** | 15.0% | cubeCompute / total |
-| **DMA 占比** | 33.6% | dmaCycles / total |
-| **理论峰值利用率** | 22.5% | cubeCompute / (cubeCompute + bubble) |
+### 3.1 测试程序
 
-**性能瓶颈**：
-- ❌ DMA 开销大（33.6%）
-- ❌ 气泡周期多（51.4%）
-- ❌ 小矩阵无法充分利用 16 个 PE
+单 tile MATMUL 程序执行如下数据流：
 
-### 16×16 矩阵性能估算（Tiling）
-
-**计算分解**：
-- 16×16 矩阵 = 4×4 个 4×4 块
-- 每个输出块 C[i][j] = Σ(k=0..3) A[i][k] × W[k][j]
-- 需要 4 次 MATMUL + 3 次 VECADD（累加中间结果）
-
-**周期估算**：
-```
-每个输出块耗时：
-  - 4 × MATMUL:  4 × 107 = 428 周期
-  - 3 × VECADD:  3 × 50  = 150 周期（估算）
-  - 小计：578 周期
-
-总周期数：16 个输出块 × 578 = 9,248 周期
+```text
+DMA_LOAD A
+DMA_LOAD W
+WAIT_ALL
+LOAD A: UB -> L0A
+LOAD W: UB -> L0B
+MATMUL: L0A x L0B -> L0C
+STORE: L0C -> UB
+DMA_STORE: UB -> L2
+WAIT_ALL
+HALT
 ```
 
-**理论峰值分析**：
-```
-总计算量：16×16×16 = 4,096 次乘加操作
-SystolicArray 吞吐量：16 次乘加/周期
-理论最少周期：4,096 / 16 = 256 周期
-实际周期：9,248 周期
-硬件利用率：256 / 9,248 = 2.8%
-```
+`LOAD`、`STORE`、`DMA_LOAD`、`DMA_STORE` 不再直接阻塞执行数据搬运，而是向对应 task queue 发任务；`WAIT` 在必要边界等待对应数据流清空。
 
-**性能瓶颈**：
-- ❌ **Tiling 开销巨大**：需要 112 次操作（16×7），每次都有 DMA 和控制开销
-- ❌ **DMA 成为瓶颈**：每次 MATMUL 需要 2×DMA_LOAD + 1×DMA_STORE
-- ❌ **中间结果累加**：需要额外的 VECADD 操作和内存访问
-- ❌ **小 SystolicArray**：4×4 PE 对于 16×16 矩阵来说太小
+### 3.2 周期计数
 
-### 多核扩展（2 核数据并行）
+| 指标 | 数值 | 含义 |
+|---|---:|---|
+| `totalCycles` | 347 | kernel 从 start 到 halted 的 NPU 性能计数器周期 |
+| 测试框架观测周期 | 348 | `runToHalt` 侧的外部观测值，含测试框架计数边界差异 |
+| `cubeComputeCycles` | 46 | Cube 有效计算活跃周期 |
+| `dmaTotalCycles` | 144 | MTE2 L2 与 UB 之间搬运周期 |
+| `copyInCycles` | 98 | MTE1 从 UB 搬入 L0A/L0B 的周期 |
+| `copyOutCycles` | 16 | MTE3 从 L0C 搬回 UB 的周期 |
+| `dataflowOverlapCycles` | 94 | Cube 与任一 MTE 同时活跃的周期 |
+| `bubbleCycles` | 278 | Scalar 等待或无可提交工作的周期 |
 
-**2 核性能**：
-- 每个核处理 8 个输出块
-- 总周期数：9,248 周期（并行执行）
-- 吞吐量：2× 单核
-- 效率：接近线性扩展
+### 3.3 派生指标
 
----
-
-## GPU (英伟达) 性能分析
-
-### 架构特点
-- **计算单元**：SIMT 标量 ALU (每 Warp 4 个 CudaCore)
-- **调度策略**：Round-Robin Warp Scheduler
-- **内存层次**：GlobalMem → SharedMem → RegFile
-- **延迟隐藏**：Warp 切换隐藏内存访问延迟
-
-### 向量加法性能数据（4 SM，latency=1）
-
-| 指标 | 数值 | 说明 |
-|------|------|------|
-| **总周期数** | 39 | 单 SM 总耗时 |
-| **Live Warp 周期** | 119 | Ready + Stalled warp-cycle |
-| **Eligible Warp 周期** | 103 | 可被调度器选择的 Ready warp-cycle |
-| **Stalled Warp 周期** | 16 | 等待 GlobalMem 的 warp-cycle |
-| **No-eligible 周期** | 0 | 没有 Ready warp 的周期 |
-| **GlobalMem 请求数** | 12 | 每 SM：4 Warps × (2 LD + 1 ST) |
-| **Warp 占用率** | 76.3% | liveWarpCycles / (total × 4) |
-
-### 向量加法性能数据（4 SM，latency=10）
-
-| 指标 | 数值 | 说明 |
-|------|------|------|
-| **总周期数** | 50 | 内存延迟增加，但被部分隐藏 |
-| **Live Warp 周期** | 190 | Ready + Stalled warp-cycle |
-| **Eligible Warp 周期** | 102 | 仍有大量周期可调度其它 warp |
-| **Stalled Warp 周期** | 88 | 等待 GlobalMem 的 warp-cycle 明显增加 |
-| **No-eligible 周期** | 14 | 延迟真正暴露到前端的周期 |
-| **GlobalMem 请求数** | 12 | 请求数量不变，差异来自 latency |
-| **Warp 占用率** | 95.0% | liveWarpCycles / (total × 4) |
-
-解释：`latency=10` 下有 88 个 stalled warp-cycle，但只有 14 个 no-eligible cycles。也就是说，大部分等待发生时，SM 里仍有其它 Ready warp 可供调度；这就是通过 warp 调度隐藏访存延迟。
-
-### 16×16 矩阵乘法性能估算
-
-**朴素实现**（每线程计算一个元素）：
-```
-每个元素需要：
-  - 16 次 LD（读取 A 的一行）
-  - 16 次 LD（读取 W 的一列）
-  - 16 次 MAD（乘加累加）
-  - 1 次 ST（写回结果）
-
-假设 latency=10：
-  - 内存访问：32 × 10 = 320 周期（等待）
-  - 计算：16 周期
-  - 写回：10 周期
-  - 每个元素：~350 周期
-
-总周期数（单 Warp 顺序执行）：
-  - 256 个元素 × 350 = 89,600 周期
-
-多 Warp 并行（4 Warp）：
-  - 理想情况：89,600 / 4 = 22,400 周期
-  - 实际（考虑调度开销）：~25,000 周期
+```text
+计算活跃占比        = 46 / 347  = 13.3%
+MTE2 DMA 占比       = 144 / 347 = 41.5%
+MTE2/Cube 重叠率    = 94 / 144  = 65.3%
+16x16 MATMUL 运算量 = 16 x 16 x 16 = 4096 MAC
+端到端有效吞吐      = 4096 / 347 = 11.8 MAC/cycle
+理想阵列下界        = 4096 / 256 = 16 cycles
+端到端理想利用率    = 16 / 347 = 4.6%
 ```
 
-**优化实现**（使用 SharedMem）：
-```
-分块策略：
-  - 将 A 和 W 分块加载到 SharedMem
-  - 减少 GlobalMem 访问次数
-  - 预期性能提升：2-3×
+这组数据表明，当前 toy NPU 的主要瓶颈不是 PE 数量不足，而是数据供给和同步边界造成的端到端开销。Cube 已经提供 256 PE 的矩阵阵列，但单个 tile 无法把 MTE2、CopyIn、CopyOut 的全部搬运成本隐藏在计算之后。
 
-优化后周期数：~8,000 - 12,000 周期
-```
+## 4. NPU：多 tile 流水效果
 
----
+队列化数据流的意义在多 tile 程序中更清楚。以下结果来自 `Pipeline3Test`、`TripleBufferTest` 和 `OverlapBenchmark`。
 
-## 性能对比总结
+| 场景 | tile 数 | totalCycles | Cube compute | MTE2 DMA | CopyIn | CopyOut | dataflow overlap | 平均每 tile |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| 单 tile MATMUL | 1 | 347 | 46 | 144 | 98 | 16 | 94 | 347.0 |
+| Pipeline3 | 3 | 855 | 138 | 432 | 294 | 48 | 182 | 285.0 |
+| TripleBuffer | 4 | 1129 | 184 | 576 | 392 | 64 | 250 | 282.3 |
+| OverlapBenchmark 顺序版 | 3 | 1038 | 138 | 432 | 294 | 48 | 282 | 346.0 |
+| OverlapBenchmark 流水版 | 3 | 832 | 138 | 432 | 294 | 48 | 282 | 277.3 |
 
-### 4×4 矩阵乘法
+`OverlapBenchmark` 中，流水版相对顺序版减少：
 
-| 指标 | NPU (昇腾) | GPU (英伟达) | NPU 优势 |
-|------|-----------|-------------|---------|
-| **总周期数** | 107 | ~350 (估算) | **3.3× 更快** |
-| **计算效率** | 15.0% | ~5% (估算) | **3× 更高** |
-| **并行度** | 16 PE 同时计算 | 4 线程/Warp | **4× 更高** |
-| **编程复杂度** | 显式 DMA | 嵌套循环 | GPU 更简单 |
-
-### 16×16 矩阵乘法
-
-| 指标 | NPU (昇腾) | GPU (英伟达) | 对比 |
-|------|-----------|-------------|------|
-| **总周期数** | 9,248 | ~25,000 (朴素) | **NPU 2.7× 更快** |
-| **总周期数** | 9,248 | ~10,000 (优化) | **接近** |
-| **硬件利用率** | 2.8% | ~10% (优化) | GPU 更高 |
-| **可扩展性** | 2 核 → 2× 吞吐 | 4 SM → 4× 吞吐 | 都支持 |
-
-### 关键洞察
-
-#### 1. 矩阵规模的影响
-
-**小矩阵（4×4）**：
-- NPU 优势明显（3.3× 更快）
-- 专用硬件效率高
-- GPU 内存延迟成为瓶颈
-
-**中等矩阵（16×16）**：
-- NPU 受 Tiling 开销影响，优势减弱
-- GPU 通过 SharedMem 优化可以接近 NPU
-- 两者性能接近
-
-**大矩阵（128×128+）**：
-- NPU 需要更大的 SystolicArray（如 16×16 或 32×32）才能发挥优势
-- GPU 通过 Tiling + SharedMem 可以高效处理
-- 内存带宽成为共同瓶颈
-
-#### 2. Tiling 开销分析
-
-**NPU 的 Tiling 问题**：
-```
-4×4 SystolicArray 处理 16×16 矩阵：
-  - 需要 16 个输出块
-  - 每个块需要 4 次 MATMUL + 3 次 VECADD
-  - 总共 112 次操作
-  - 每次操作都有 DMA 和控制开销
-  - 硬件利用率仅 2.8%
+```text
+1038 - 832 = 206 cycles
+206 / 1038 = 19.8%
 ```
 
-**解决方案**：
-- ✅ 增大 SystolicArray 尺寸（16×16 → 一次计算整个矩阵）
-- ✅ 增大片上缓存（减少 DMA 次数）
-- ✅ 流水线优化（DMA 和计算重叠）
+这说明 task queue 并没有减少总搬运工作量，而是让下一 tile 的 DMA/CopyIn 更早进入数据流，与当前 tile 的计算阶段重叠。平均每 tile 周期从 346.0 降至 277.3，体现的是显式数据流编排带来的吞吐改善。
 
-#### 3. 真实硬件对比
+同时，MTE2 DMA 仍然是主要瓶颈。以流水版为例，3 个 tile 的 MTE2 DMA 周期为 432，而 Cube compute 周期为 138；即使调度更积极，外部搬运仍不能被完全掩盖。
 
-**真实昇腾 NPU**：
-- SystolicArray 尺寸：16×16 或更大
-- 多级缓存：L0A/L0B/L0C + L1 + L2
-- MTE (Memory Transfer Engine) 支持流水线
-- 实际性能：远超本项目的玩具实现
+## 5. GPU：SIMT 向量加法实测
 
-**真实英伟达 GPU**：
-- Tensor Core：专用矩阵乘法单元（类似 SystolicArray）
-- 更多 SM 和 Warp（如 80 SM × 32 Warp）
-- 更大的 SharedMem 和 L2 Cache
-- 实际性能：与 NPU 在同一量级
+当前 GPU 测试运行 4 个 SM 的向量加法程序：
 
----
+```text
+LD R0, [base + 0]
+LD R1, [base + 1]
+ADD R2, R0, R1
+ST [base + 2], R2
+HALT
+```
 
-## 优化建议
+### 5.1 GlobalMem latency = 1
 
-### NPU 优化方向
+| 指标 | 数值 |
+|---|---:|
+| total cycles | 39 |
+| live warp cycles | 119 |
+| eligible warp cycles | 103 |
+| stalled warp cycles | 16 |
+| no-eligible cycles | 0 |
+| ALU issue cycles | 3 |
+| memory issue cycles | 12 |
+| warp 占用率 | 76.3% |
 
-1. **增大 SystolicArray**
-   - 从 4×4 扩展到 16×16 或 32×32
-   - 减少 Tiling 次数，提高硬件利用率
+### 5.2 GlobalMem latency = 10
 
-2. **优化 DMA 调度**
-   - 流水线：DMA 和计算重叠
-   - 双缓冲：一个缓冲区计算，另一个加载数据
+| 指标 | 数值 |
+|---|---:|
+| total cycles | 50 |
+| live warp cycles | 190 |
+| eligible warp cycles | 102 |
+| stalled warp cycles | 88 |
+| no-eligible cycles | 14 |
+| ALU issue cycles | 3 |
+| memory issue cycles | 12 |
+| warp 占用率 | 95.0% |
 
-3. **多核并行**
-   - 2 核数据并行，吞吐量翻倍
-   - 适合批量矩阵乘法（Transformer Attention）
+访存延迟从 1 增加到 10 后，总周期只从 39 增加到 50。原因是 stalled warp-cycle 从 16 增至 88，但其中大部分等待被其它 ready warp 的执行覆盖；真正暴露到前端的 no-eligible cycles 只有 14。这体现了 GPU SIMT 模型的核心思想：用大量 warp 的可切换性隐藏单个 warp 的访存等待。
 
-4. **编译器优化**
-   - 自动 Tiling 和数据编排
-   - 减少程序员负担
+## 6. 矩阵乘场景的可比性
 
-### GPU 优化方向
+当前 NPU 侧有 16x16 MATMUL 的实测周期；当前 GPU 侧没有 Tensor Core，也没有已验证的矩阵乘测试。因此，严格说本文只能比较两类模型在各自代表 workload 下的性能特征：
 
-1. **使用 SharedMem**
-   - 分块加载数据到 SharedMem
-   - 减少 GlobalMem 访问次数
+- NPU 数据说明：专用矩阵阵列必须依赖 MTE、片上缓存和 token 同步才能接近持续吞吐。
+- GPU 数据说明：SIMT 调度器通过 warp 切换把一部分访存延迟转化为后台等待。
+- 当前仓库数据不能证明“真实昇腾 Cube Core 一定快于或慢于真实 NVIDIA Tensor Core”。
 
-2. **增加 Warp 数量**
-   - 提高延迟隐藏能力
-   - 更好地利用内存带宽
+若要在本仓库内进行更严格的矩阵乘对比，需要补齐至少两类测试：
 
-3. **使用 Tensor Core**
-   - 专用矩阵乘法单元
-   - 性能提升 10-20×
+1. 在 GPU 模型中实现朴素 SIMT 16x16 MATMUL，并记录 GlobalMem、SharedMem 和 MAD 指令周期。
+2. 在 GPU 模型中加入 Tensor Core 类矩阵执行单元，再与 NPU Cube tile 在相同 tile 大小、相同数据类型、相同访存层次假设下比较。
 
-4. **优化内存访问模式**
-   - Coalesced access（合并访问）
-   - Bank conflict 避免
+## 7. 32x32 矩阵乘估算
 
----
+当前 `LargeMatmulTest` 使用 16x16 tile 对 32x32 矩阵乘做上限估算：
 
-## 结论
+```text
+32x32 输出矩阵 = 2 x 2 个 16x16 输出 tile
+每个输出 tile 在 K 方向需要 2 次 MATMUL/MATMUL_ACC
+总 tile 计算次数 = 2 x 2 x 2 = 8
+单 16x16 tile 外部观测约 348 cycles
+顺序执行粗略上限 = 8 x 348 = 2784 cycles
+理论 PE 周期下界 = (32 x 32 x 32) / 256 = 128 cycles
+```
 
-### 小矩阵（4×4）
-- ✅ **NPU 明显更快**（3.3×）
-- 专用硬件优势明显
-- 适合边缘设备推理
+该估算不是完整 benchmark。它用于说明：矩阵规模变大后，tile 数和 K 方向累加次数迅速增加；是否能获得高吞吐，取决于 DMA、CopyIn、Compute、CopyOut 能否形成稳定流水，而不只是单次 MATMUL 的峰值能力。
 
-### 中等矩阵（16×16）
-- ⚖️ **性能接近**
-- NPU 受 Tiling 开销影响
-- GPU 通过 SharedMem 优化可以追上
+## 8. 结论
 
-### 大矩阵（128×128+）
-- ⚖️ **取决于硬件规模**
-- NPU 需要更大的 SystolicArray
-- GPU 需要 Tensor Core
-- 两者在真实硬件上性能相当
+1. 当前 NPU 模型的优势在于已经具备专用 16x16 Cube tile 和显式数据流机制，但端到端效率仍主要受 MTE2 搬运、CopyIn/CopyOut 和同步边界限制。
+2. task queue 与 token wait 的价值体现在多 tile 场景：流水版 `OverlapBenchmark` 比顺序版减少 206 cycles，平均每 tile 从 346.0 cycles 降到 277.3 cycles。
+3. 当前 GPU 模型展示的是 SIMT 延迟隐藏能力：GlobalMem latency 增大 10 倍后，总周期只从 39 增至 50。
+4. 当前仓库还不能做 Cube Core 与 Tensor Core 的直接性能结论。直接比较需要在同一模型内实现 GPU 矩阵乘或 Tensor Core，并统一数据类型、tile 大小、访存层次和调度策略。
 
-### 实际应用建议
-
-**选择 NPU**：
-- 深度学习训练/推理（矩阵乘法密集）
-- 固定模型部署（如 ResNet、BERT）
-- 追求能效比（专用硬件功耗低）
-
-**选择 GPU**：
-- 通用计算（图形渲染、科学计算）
-- 快速原型开发（编程灵活）
-- 需要支持多种算法
-
----
-
-## 运行测试
+## 9. 复现实验
 
 ```bash
-# NPU 4×4 矩阵乘法
-sbt "testOnly ascend.IntegrationTest"
+# NPU 单 tile、32x32 估算、GPU VADD
+sbt "testOnly ascend.IntegrationTest ascend.LargeMatmulTest gpu.GpuIntegrationTest"
 
-# NPU 大矩阵性能估算
-sbt "testOnly ascend.LargeMatmulTest"
-
-# GPU 向量加法
-sbt "testOnly gpu.GpuIntegrationTest"
-
-# 多核性能测试
-sbt "testOnly ascend.MultiCoreTest"
+# NPU 多 tile 流水与重叠测试
+sbt "testOnly ascend.Pipeline3Test ascend.TripleBufferTest ascend.OverlapBenchmark"
 ```
 
----
+相关源码：
 
-## 参考资料
-
-- NPU 架构：`docs/architecture_zh.md` - 第一章
-- GPU 架构：`docs/architecture_zh.md` - 第二章
-- 性能计数器：`src/main/scala/ascend/PerfCounters.scala`
-- 测试用例：`src/test/scala/ascend/IntegrationTest.scala`
-- 大矩阵测试：`src/test/scala/ascend/LargeMatmulTest.scala`
+- `src/main/scala/ascend/AscendParams.scala`
+- `src/main/scala/ascend/AiCore.scala`
+- `src/main/scala/ascend/ScalarUnit.scala`
+- `src/main/scala/ascend/PerfCounters.scala`
+- `src/main/scala/gpu/GpuParams.scala`
+- `src/test/scala/ascend/IntegrationTest.scala`
+- `src/test/scala/ascend/OverlapBenchmark.scala`
+- `src/test/scala/gpu/GpuIntegrationTest.scala`
