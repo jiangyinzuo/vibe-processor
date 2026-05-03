@@ -188,14 +188,14 @@ val state = RegInit(sIdle)
         - 结果写回 RegFile
      
      b. 内存指令（LD/ST）：
-        - LD: 启动 GlobalMem 读取，进入 MemWait 状态
-        - ST: 写入 GlobalMem，立即完成
+        - LD: 向 HBM Controller 发起读请求，进入 MemWait 状态
+        - ST: 向 HBM Controller 发起写请求，请求被接受后完成
      
      c. 控制指令（HALT）：
         - 进入 Halted 状态
 
 5. MemWait（内存等待）
-   - 等待 GlobalMem 访问完成
+   - 等待 HBM Model 返回 read response
    - 延迟计数器递减
    - 完成后返回 Idle 状态
 
@@ -210,7 +210,7 @@ class Warp extends Module {
   val io = IO(new Bundle {
     val grant = Input(Bool())  // 调度器授予的执行权限
     val imemData = Input(UInt(32.W))
-    val gmemRdata = Input(Vec(warpWidth, SInt(dw.W)))
+    val hbmResp = Flipped(Valid(new HbmResponse(warpWidth, dw)))
     // ...
   })
 
@@ -260,7 +260,7 @@ class Warp extends Module {
       when(memLatencyCnt === 0.U) {
         // 内存访问完成，写入寄存器
         for (i <- 0 until warpWidth) {
-          regFile(rd)(i) := io.gmemRdata(i)
+          regFile(rd)(i) := io.hbmResp.bits.rdata(i)
         }
         pc := pc + 1.U
         state := sIdle
@@ -402,11 +402,10 @@ for (int i = threadIdx.x; i < N; i += blockDim.x) {
 
 **本项目实现**：
 ```scala
-// GlobalMem 访问：Warp 中的 4 个线程访问连续地址
-val gmemAddr = rs1 + imm  // 基地址
-for (i <- 0 until warpWidth) {
-  gmemData(i) = GlobalMem[gmemAddr + i]
-}
+// HBM-backed GlobalMem 访问：一个地址返回一行 warpWidth 宽的数据
+val hbmAddr = rs1 + imm
+io.hbmReq.bits.addr := hbmAddr
+io.hbmReq.bits.wdata := laneData
 ```
 
 **优势**：
@@ -512,20 +511,20 @@ sbt "testOnly gpu.InstructionDispatcherMultiIssueTest gpu.DualSchedulerTest gpu.
 | 场景 | total | live warp-cycle | eligible | stalled | no-eligible | ALU issue | MEM issue |
 |---|---:|---:|---:|---:|---:|---:|---:|
 | 纯计算，10 条 ADD | 85 | 252 | 252 | 0 | 0 | 20 | 0 |
-| 内存密集，`LD -> LD -> ADD -> ST`, `latency=10` | 50 | 190 | 102 | 88 | 14 | 3 | 12 |
-| 混合，`LD -> ADD×5 -> ST`, `latency=5` | 62 | 238 | 214 | 24 | 2 | 11 | 8 |
+| 内存密集，`LD -> LD -> ADD -> ST`, `latency=10` | 113 | 334 | 128 | 206 | 23 | 4 | 12 |
+| 混合，`LD -> ADD×5 -> ST`, `latency=5` | 75 | 266 | 220 | 46 | 0 | 20 | 8 |
 
-`gpu.GpuIntegrationTest` 的 4-SM VADD 结果（每个 SM 相同）：
+`gpu.GpuIntegrationTest` 的 4-SM VADD 结果（下表报告最后完成的 SM；SM 之间会因共享 HBM Controller 仲裁而不同）：
 
 | 场景 | total | live warp-cycle | eligible | stalled | no-eligible | ALU issue | MEM issue |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| VADD, `gmemLatency=1` | 39 | 119 | 103 | 16 | 0 | 3 | 12 |
-| VADD, `gmemLatency=10` | 50 | 190 | 102 | 88 | 14 | 3 | 12 |
+| VADD, `gmemLatency=1` | 73 | 258 | 171 | 87 | 0 | 4 | 12 |
+| VADD, `gmemLatency=10` | 384 | 1393 | 658 | 735 | 28 | 4 | 12 |
 
 关键结论：
 
-- `latency=10` 的 VADD 从 39 cycles 增加到 50 cycles，而不是按每次访存额外 9 cycles 线性放大，说明一部分访存等待被 warp 切换覆盖。
-- 内存密集用例中 `stalledWarpCycles=88`，说明确实有大量 warp 在等内存；但 `noEligibleCycles=14`，说明只有 14 个周期 SM 完全没有 ready warp，其它周期仍能找到 warp 继续前进。
+- 单 SM 内存密集用例中 `stalledWarpCycles=206`，说明 HBM 等待和请求排队都会形成可观停顿；`noEligibleCycles=23`，说明仍有部分等待暴露到前端。
+- 4-SM VADD 中，latency=10 的总周期显著增加，主要来自多个 SM 共享一个 HBM Controller 后的全局仲裁与排队。
 - 纯计算用例 `stalledWarpCycles=0`、`noEligibleCycles=0`，验证这些计数器没有把普通流水线开销误算成访存等待。
 - 当前 `dualIssueCycles=0` 出现在这些 VADD/ADD/MEM 用例中是正常的；ALU/SFU 同周期发射由 `InstructionDispatcherMultiIssueTest` 单独验证。
 

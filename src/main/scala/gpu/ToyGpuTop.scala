@@ -2,13 +2,14 @@ package gpu
 
 import chisel3._
 import chisel3.util._
+import common.{HbmController, HbmModel, HbmRequest}
 
 /** Toy GPU Top Level — Multi-SM architecture.
   *
   * @param numSMs
   *   Number of Streaming Multiprocessors (default 4).
   * @param gmemLatency
-  *   Global memory read latency per warp (default 10).
+  *   HBM model read latency (default 10).
   * @param useSharedArch
   *   Use shared CUDA Core architecture (true) or per-Warp architecture (false). 注意：当前版本默认使用共享架构（真实
   *   GPU 设计）
@@ -50,14 +51,27 @@ class ToyGpuTop(
   val imem = Mem(GpuParams.IMEMDepth, UInt(GpuParams.InstrWidth.W))
   when(io.imemLoadEn) { imem.write(io.imemLoadAddr, io.imemLoadData) }
 
-  // Shared global memory (combinational read, latency modeled in Warps)
-  val gmem = Mem(GpuParams.GlobalDepth, Vec(warpWidth, SInt(dw.W)))
+  // Shared HBM boundary. The controller is on the GPU side; the model is the
+  // external memory stack used by simulation and tests.
+  val hbmController = Module(new HbmController(warpWidth, dw, GpuParams.GlobalAddrW))
+  val hbmModel = Module(
+    new HbmModel(
+      n = warpWidth,
+      aw = dw,
+      depth = GpuParams.GlobalDepth,
+      latency = gmemLatency,
+      addrW = GpuParams.GlobalAddrW
+    )
+  )
 
-  // External port
-  io.gmemExt.rdata := gmem.read(io.gmemExt.addr)
-  when(io.gmemExt.en && io.gmemExt.we) {
-    gmem.write(io.gmemExt.addr, io.gmemExt.wdata)
-  }
+  hbmModel.io.req <> hbmController.io.memReq
+  hbmController.io.memResp <> hbmModel.io.resp
+
+  hbmModel.io.direct.en := io.gmemExt.en
+  hbmModel.io.direct.we := io.gmemExt.we
+  hbmModel.io.direct.addr := io.gmemExt.addr
+  hbmModel.io.direct.wdata := io.gmemExt.wdata
+  io.gmemExt.rdata := hbmModel.io.direct.rdata
 
   // === Streaming Multiprocessors ===
   // 使用共享 CUDA Core 架构（真实 GPU 设计）
@@ -79,6 +93,33 @@ class ToyGpuTop(
     )
   )
 
+  val smIdW = math.max(1, log2Ceil(numSMs))
+  val smReqValidVec = VecInit(sms.map(_.io.hbmReq.valid).toSeq)
+  val smReqSelOH = PriorityEncoderOH(smReqValidVec)
+  val selectedSmId = Mux1H(smReqSelOH, (0 until numSMs).map(_.U(smIdW.W)))
+  val selectedHbmReq = Wire(new HbmRequest(warpWidth, dw, GpuParams.GlobalAddrW))
+  selectedHbmReq := 0.U.asTypeOf(selectedHbmReq)
+  for (i <- 0 until numSMs) {
+    when(smReqSelOH(i)) {
+      selectedHbmReq := sms(i).io.hbmReq.bits
+    }
+  }
+
+  hbmController.io.coreReq.valid := smReqValidVec.asUInt.orR
+  hbmController.io.coreReq.bits := selectedHbmReq
+
+  val hbmCoreReqFire = hbmController.io.coreReq.valid && hbmController.io.coreReq.ready
+  val readRespPending = RegInit(false.B)
+  val readRespSmId = RegInit(0.U(smIdW.W))
+  when(io.start) {
+    readRespPending := false.B
+  }.elsewhen(hbmCoreReqFire && !hbmController.io.coreReq.bits.we) {
+    readRespPending := true.B
+    readRespSmId := selectedSmId
+  }.elsewhen(hbmController.io.coreResp.valid) {
+    readRespPending := false.B
+  }
+
   ctaScheduler.io.start := io.start
   io.allHalted := ctaScheduler.io.allDone
 
@@ -94,12 +135,10 @@ class ToyGpuTop(
       sm.io.imemData(w) := imem.read(sm.io.imemAddr(w))
     }
 
-    // Global memory: each SM gets combinational read access
-    // Mem supports multiple combinational reads per cycle
-    sm.io.gmemRdata := gmem.read(sm.io.gmemAddr)
-    when(sm.io.gmemEn && sm.io.gmemWe) {
-      gmem.write(sm.io.gmemAddr, sm.io.gmemWdata)
-    }
+    sm.io.hbmReq.ready := smReqSelOH(i) && hbmController.io.coreReq.ready
+    sm.io.hbmResp.valid := hbmController.io.coreResp.valid && readRespPending &&
+      readRespSmId === i.U
+    sm.io.hbmResp.bits := hbmController.io.coreResp.bits
 
     io.perf(i) := sm.io.perf
   }

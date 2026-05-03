@@ -54,6 +54,7 @@ class InstructionDispatcherMultiIssueTest extends AnyFunSpec with ChiselSim {
           dut.io.sfuDone(i).poke(false.B)
           dut.io.sfuRd(i).poke(0.S)
         }
+        dut.io.memReqReady.poke(true.B)
 
         dut.io.selectedWarp(0)(0).valid.poke(true.B)
         dut.io.selectedWarp(0)(0).bits.poke(0.U)

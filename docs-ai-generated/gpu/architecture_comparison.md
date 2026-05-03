@@ -36,7 +36,7 @@ SM
 ├── SharedRegisterFile
 ├── InstructionDispatcher
 ├── SharedMem
-└── GlobalMem 接口
+└── HBM Controller / HBM Model 接口
 ```
 
 Warp 主要保存：

@@ -2,12 +2,12 @@ package ascend
 
 import chisel3._
 import chisel3.util._
-import common.LatencyMem
+import common.{HbmController, HbmModel}
 
 /** Toy Ascend NPU Top Level — Multi-core architecture.
   *
-  * Storage hierarchy: HBM (off-chip) ──ext preload──► L2Buffer (shared) ──DMA──► UB (per-core) ──►
-  * Compute
+  * Storage hierarchy: HBM model (off-chip simulation) ──HBM Controller boundary──► L2Buffer
+  * (shared) ──DMA──► UB (per-core) ──► Compute
   *
   * The top-level ControlCpu models the device-side task/control plane. It owns SPMD block dispatch
   * and launches physical AiCores as execution slots.
@@ -70,26 +70,36 @@ class ToyAscendTop(
     imem.write(io.imemLoadAddr, io.imemLoadData)
   }
 
-  // === HBM (off-chip, with latency) ===
-  val hbm = Module(
-    new LatencyMem(
-      gen = Vec(n, SInt(aw.W)),
+  // === HBM boundary ===
+  // Real hardware would keep the HBM stack outside the compute die and connect through
+  // controller/PHY IP. The toy top instantiates a controller plus an HBM model so simulation still
+  // has preload/readback storage.
+  val hbmController = Module(new HbmController(n, aw, AscendParams.HBMAddrW))
+  val hbmModel = Module(
+    new HbmModel(
+      n = n,
+      aw = aw,
       depth = AscendParams.HBMDepth,
       latency = hbmLatency,
       addrW = AscendParams.HBMAddrW
     )
   )
-  // HBM external port (direct access for test preload)
-  hbm.io.direct.en := io.hbmExt.en
-  hbm.io.direct.we := io.hbmExt.we
-  hbm.io.direct.addr := io.hbmExt.addr
-  hbm.io.direct.wdata := io.hbmExt.wdata
-  io.hbmExt.rdata := hbm.io.direct.rdata
-  // HBM req port — not used by cores (they access L2); driven by external or idle
-  hbm.io.req.valid := false.B
-  hbm.io.req.we := false.B
-  hbm.io.req.addr := 0.U
-  hbm.io.req.wdata := VecInit.fill(n)(0.S(aw.W))
+
+  hbmModel.io.req <> hbmController.io.memReq
+  hbmController.io.memResp <> hbmModel.io.resp
+
+  // Core-side HBM traffic is not wired into the current execution path; cores access L2 directly.
+  hbmController.io.coreReq.valid := false.B
+  hbmController.io.coreReq.bits.we := false.B
+  hbmController.io.coreReq.bits.addr := 0.U
+  hbmController.io.coreReq.bits.wdata := VecInit.fill(n)(0.S(aw.W))
+
+  // Test-only direct access to the external HBM model.
+  hbmModel.io.direct.en := io.hbmExt.en
+  hbmModel.io.direct.we := io.hbmExt.we
+  hbmModel.io.direct.addr := io.hbmExt.addr
+  hbmModel.io.direct.wdata := io.hbmExt.wdata
+  io.hbmExt.rdata := hbmModel.io.direct.rdata
 
   // === Shared L2 Buffer (on-chip, multi-port for cores + external) ===
   // Use a simple Mem (combinational read) to allow multiple cores to access per cycle

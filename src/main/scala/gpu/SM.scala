@@ -2,6 +2,7 @@ package gpu
 
 import chisel3._
 import chisel3.util._
+import common.{HbmRequest, HbmResponse}
 
 /** Streaming Multiprocessor - 共享架构版本
   *
@@ -10,7 +11,7 @@ import chisel3.util._
   *   - 每个 sub-partition 拥有自己的 WarpScheduler、CUDA Core 和 SFU lane group
   *   - Warp 只是轻量级的执行上下文（不包含物理 ALU）
   *   - 寄存器文件是共享的，按 (WarpId, LaneId, RegId) 索引
-  *   - SharedMem 和 GlobalMem 请求路径仍由 SM 顶层统一仲裁
+  *   - SharedMem 由 SM 内部管理，HBM 请求由 SM 顶层统一仲裁
   */
 class SM(
     numWarps: Int = 4,
@@ -35,12 +36,9 @@ class SM(
     val imemAddr = Output(Vec(numWarps, UInt(8.W)))
     val imemData = Input(Vec(numWarps, UInt(GpuParams.InstrWidth.W)))
 
-    // Global memory
-    val gmemEn = Output(Bool())
-    val gmemWe = Output(Bool())
-    val gmemAddr = Output(UInt(GpuParams.GlobalAddrW.W))
-    val gmemWdata = Output(Vec(warpWidth, SInt(dw.W)))
-    val gmemRdata = Input(Vec(warpWidth, SInt(dw.W)))
+    // HBM request/response path
+    val hbmReq = Decoupled(new HbmRequest(warpWidth, dw, GpuParams.GlobalAddrW))
+    val hbmResp = Flipped(Valid(new HbmResponse(warpWidth, dw)))
 
     // Performance counters
     val perf = Output(new GpuPerfCounters)
@@ -76,6 +74,12 @@ class SM(
   // === Warp 上下文（轻量级）===
   val warpContexts = RegInit(VecInit.fill(numWarps)(WarpContext.init(warpWidth, dw)))
   val fullActiveMask = ((BigInt(1) << warpWidth) - 1).U(8.W)
+  val warpIdW = log2Ceil(numWarps)
+
+  val memLoadInFlight = RegInit(false.B)
+  val memLoadWarpId = RegInit(0.U(warpIdW.W))
+  val memRespPending = RegInit(false.B)
+  val memRespWarpId = RegInit(0.U(warpIdW.W))
 
   // === CTA / thread block residency ===
   val ctaActive = RegInit(VecInit.fill(maxCTAsPerSM)(false.B))
@@ -100,9 +104,8 @@ class SM(
 
   for (i <- 0 until numWarps) {
     when(
-      warpContexts(i).started && warpContexts(i).state === WarpState.Stalled && warpContexts(
-        i
-      ).memWaitCounter === 0.U
+      memRespPending && memRespWarpId === i.U && warpContexts(i).started &&
+        warpContexts(i).state === WarpState.Stalled
     ) {
       hasMemWb := true.B
       memWbWarpId := i.U
@@ -162,24 +165,27 @@ class SM(
   regFile.io.wrAddr := dispatcher.io.regWrAddr
   regFile.io.wrData := dispatcher.io.regWrData
 
-  // === 内存访问处理 ===
-  io.gmemEn := false.B
-  io.gmemWe := false.B
-  io.gmemAddr := 0.U
-  io.gmemWdata := VecInit.fill(warpWidth)(0.S)
+  // === HBM 访问处理 ===
+  // Load response is returned later by the shared HBM model, so the SM records
+  // the requesting warp and writes the data back when the response arrives.
+  val canIssueHbmReq = !memLoadInFlight && !memRespPending
+  dispatcher.io.memReqReady := io.hbmReq.ready && canIssueHbmReq
+  io.hbmReq.valid := dispatcher.io.memReq.valid && canIssueHbmReq
+  io.hbmReq.bits.we := !dispatcher.io.memReq.bits.isLoad
+  io.hbmReq.bits.addr := dispatcher.io.memReq.bits.addr
+  io.hbmReq.bits.wdata := dispatcher.io.memWdata
 
-  when(dispatcher.io.memReq.valid) {
-    io.gmemEn := true.B
-    io.gmemWe := !dispatcher.io.memReq.bits.isLoad
-    io.gmemAddr := dispatcher.io.memReq.bits.addr
-    when(dispatcher.io.memReq.bits.isLoad) {
-      // LOAD: 锁存读取的数据到 WarpContext
-      val warpId = dispatcher.io.memReq.bits.warpId
-      warpContexts(warpId).memRdData := io.gmemRdata
-    }.otherwise {
-      // STORE: 写入数据
-      io.gmemWdata := dispatcher.io.memWdata
-    }
+  val hbmReqFire = io.hbmReq.valid && io.hbmReq.ready
+  when(hbmReqFire && dispatcher.io.memReq.bits.isLoad) {
+    memLoadInFlight := true.B
+    memLoadWarpId := dispatcher.io.memReq.bits.warpId
+  }
+
+  when(io.hbmResp.valid && memLoadInFlight) {
+    warpContexts(memLoadWarpId).memRdData := io.hbmResp.bits.rdata
+    memRespPending := true.B
+    memRespWarpId := memLoadWarpId
+    memLoadInFlight := false.B
   }
 
   // === CTA 完成检测 ===
@@ -223,7 +229,7 @@ class SM(
   // 由于 hasMemWb 会阻止 dispatcher 发射新指令，所以不会有写端口冲突
   for (i <- 0 until numWarps) {
     when(warpContexts(i).started && warpContexts(i).state === WarpState.Stalled) {
-      when(warpContexts(i).memWaitCounter === 0.U) {
+      when(memRespPending && memRespWarpId === i.U) {
         // 内存访问完成，写回数据到寄存器文件
         for (lane <- 0 until warpWidth) {
           regFile.io.wrAddr(lane).valid := true.B
@@ -235,14 +241,19 @@ class SM(
         // 恢复到 Ready 状态
         warpContexts(i).state := WarpState.Ready
         warpContexts(i).pc := warpContexts(i).pc + 1.U
+        memRespPending := false.B
       }.otherwise {
-        warpContexts(i).memWaitCounter := warpContexts(i).memWaitCounter - 1.U
+        when(warpContexts(i).memWaitCounter =/= 0.U) {
+          warpContexts(i).memWaitCounter := warpContexts(i).memWaitCounter - 1.U
+        }
       }
     }
   }
 
   // === Grid start / CTA slot launch / CTA completion ===
   when(io.start) {
+    memLoadInFlight := false.B
+    memRespPending := false.B
     for (slot <- 0 until maxCTAsPerSM) {
       ctaActive(slot) := false.B
       ctaIds(slot) := 0.U
@@ -353,9 +364,9 @@ class SM(
     when(dispatcher.io.perf.memIssue) { memIssueCycles := memIssueCycles + 1.U }
     when(dispatcher.io.perf.dualIssue) { dualIssueCycles := dualIssueCycles + 1.U }
 
-    // 统计内存访问
-    when(io.gmemEn) {
-      when(io.gmemWe) {
+    // 统计 HBM 访问
+    when(hbmReqFire) {
+      when(io.hbmReq.bits.we) {
         gmemWrites := gmemWrites + 1.U
       }.otherwise {
         gmemReads := gmemReads + 1.U

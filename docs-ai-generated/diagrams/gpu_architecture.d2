@@ -32,7 +32,18 @@ imem: InstrMem\n共享 256×32b {
   }
 }
 
-gmem: GlobalMem\n片外 4096×128b\nLatency in Warp {
+hbmCtrl: HBM Controller\nreq/resp boundary {
+  shape: rectangle
+  style: {
+    fill: "#FFE0B2"
+    stroke: ${border-color}
+    stroke-width: 3
+    font-size: 14
+    bold: true
+  }
+}
+
+hbm: HBM Model\n片外 4096×128b\nLatency=10 {
   shape: cylinder
   style: {
     fill: "#CFD8DC"
@@ -227,6 +238,14 @@ sm3: SM 3 {
   sched -> w0 {style.stroke-width: 2}
 }
 
+hbmCtrl -> hbm {
+  style: {
+    stroke: "#546E7A"
+    stroke-width: 2
+    stroke-dash: 3
+  }
+}
+
 imem -> sm0.sched {
   style: {
     stroke: "#1976D2"
@@ -256,25 +275,25 @@ imem -> sm3.sched {
   }
 }
 
-gmem -> sm0.w0: LD/ST {
+hbmCtrl -> sm0.w0: LD/ST req {
   style: {
     stroke: "#D32F2F"
     stroke-width: 3
   }
 }
-gmem -> sm1.w0: LD/ST {
+hbmCtrl -> sm1.w0: LD/ST req {
   style: {
     stroke: "#D32F2F"
     stroke-width: 3
   }
 }
-gmem -> sm2.w0: LD/ST {
+hbmCtrl -> sm2.w0: LD/ST req {
   style: {
     stroke: "#D32F2F"
     stroke-width: 3
   }
 }
-gmem -> sm3.w0: LD/ST {
+hbmCtrl -> sm3.w0: LD/ST req {
   style: {
     stroke: "#D32F2F"
     stroke-width: 3

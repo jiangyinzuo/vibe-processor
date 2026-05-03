@@ -7,7 +7,8 @@ ToyAscendTop
   ├── AiCpu
   ├── InstrMem
   ├── L2 Buffer
-  ├── HBM
+  ├── HBM Controller
+  ├── HBM Model（仿真用）
   ├── AiCore 0 + private UB
   └── AiCore 1 + private UB
 ```
@@ -126,14 +127,15 @@ L2 -> MTE2 -> UB -> MTE1 -> Cube input FIFO -> Cube -> L0C -> MTE3 -> UB -> MTE2
 
 | 层级 | 当前实现 | 容量/形状 | 共享范围 |
 |---|---|---:|---|
-| HBM | `LatencyMem` | 4096 行，默认 10 cycle latency | 顶层全局 |
+| HBM Controller | `HbmController` | 请求/响应边界 | 顶层全局 |
+| HBM Model | `HbmModel` 内部包裹 `LatencyMem` | 4096 行，默认 10 cycle latency | 仿真外部存储 |
 | L2 Buffer | `Mem` | 2048 行 | 多 AiCore 共享 |
 | UB | `UnifiedBuffer` | 每核 256 行 | AiCore 私有 |
 | L0 activation FIFO | `CubeCore.l0a` | 4 个 16x16 tile slot | CubeCore 私有 |
 | L0 weight FIFO | `CubeCore.l0b` | 4 个 16x16 tile slot | CubeCore 私有 |
 | L0C | `CubeCore` 内部寄存器 | 1 个 16x16 tile | CubeCore 私有 |
 
-L2 和 HBM 都带有外部 preload/readback 端口，主要服务测试。当前 AiCore 实际执行路径只访问 L2，不直接访问 HBM；`ToyAscendTop` 里 HBM 的 req 口被置为空闲，所以 HBM 目前只是带延迟的片外存储占位模型。
+L2 带有外部 preload/readback 端口，服务测试。HBM 路径现在拆成 `HbmController` 和 `HbmModel`：controller 表示计算 die 侧的控制器边界，model 表示仿真环境中的外部 HBM stack。当前 AiCore 实际执行路径只访问 L2，不直接访问 HBM；`ToyAscendTop` 里 `HbmController` 的 core-facing request 口仍置为空闲。
 
 UB 有两个端口：
 
@@ -205,7 +207,7 @@ UB 有两个端口：
 
 - 只支持 1D `blockIdx`，没有 2D/3D grid。
 - `GetBlockIdx()` 没有作为 scalar 指令或寄存器暴露。
-- HBM 没有接入真实 GM 到 L2 的运行时搬运路径。
+- HBM Controller 尚未接入真实 GM 到 L2 的运行时搬运路径；`HbmModel` 仅用于仿真 preload/readback。
 - L2、UB、L0 没有建模 bank conflict、NoC、cache coherence 或复杂 arbitration。
 - MTE 队列是简单 FIFO，没有 stream、barrier、重排序和真实格式转换。
 - AI CPU 只是 L2 row task engine，不是完整 CPU。

@@ -26,21 +26,38 @@
       }
     },
     {
-      "id": "gmem",
-      "name": "GlobalMem",
+      "id": "hbm_ctrl",
+      "name": "HBM Controller",
       "type": "memory",
-      "description": "片外 4096×128b\nLatency in WarpContext",
+      "description": "GPU侧全局访存仲裁\nreq/resp boundary",
       "position": { "x": 350, "y": 50 },
       "size": { "width": 220, "height": 120 },
       "style": {
-        "fill": "#CFD8DC",
+        "fill": "#FFE0B2",
         "stroke": "#37474F",
         "strokeWidth": 3,
         "shape": "rectangle"
       },
       "metadata": {
+        "sourceFile": "src/main/scala/common/Hbm.scala"
+      }
+    },
+    {
+      "id": "hbm_model",
+      "name": "HBM Model",
+      "type": "memory",
+      "description": "片外 4096×128b\nLatency=10",
+      "position": { "x": 620, "y": 50 },
+      "size": { "width": 220, "height": 120 },
+      "style": {
+        "fill": "#CFD8DC",
+        "stroke": "#37474F",
+        "strokeWidth": 3,
+        "shape": "cylinder"
+      },
+      "metadata": {
         "capacity": "4096×128b",
-        "sourceFile": "src/main/scala/gpu/ToyGpuTop.scala:40"
+        "sourceFile": "src/main/scala/common/Hbm.scala"
       }
     },
     {
@@ -362,10 +379,21 @@
       }
     },
     {
+      "id": "conn_hbm_ctrl_model",
+      "source": "hbm_ctrl",
+      "target": "hbm_model",
+      "label": "req/resp",
+      "style": {
+        "stroke": "#546E7A",
+        "strokeWidth": 2,
+        "strokeDasharray": "5,5"
+      }
+    },
+    {
       "id": "conn_gmem_sm0",
-      "source": "gmem",
+      "source": "hbm_ctrl",
       "target": "sm0.warp0_0",
-      "label": "LD/ST",
+      "label": "LD/ST req",
       "style": {
         "stroke": "#D32F2F",
         "strokeWidth": 3
@@ -377,9 +405,9 @@
     },
     {
       "id": "conn_gmem_sm1",
-      "source": "gmem",
+      "source": "hbm_ctrl",
       "target": "sm1.warps1",
-      "label": "LD/ST",
+      "label": "LD/ST req",
       "style": {
         "stroke": "#D32F2F",
         "strokeWidth": 3
@@ -391,9 +419,9 @@
     },
     {
       "id": "conn_gmem_sm2",
-      "source": "gmem",
+      "source": "hbm_ctrl",
       "target": "sm2.warps2",
-      "label": "LD/ST",
+      "label": "LD/ST req",
       "style": {
         "stroke": "#D32F2F",
         "strokeWidth": 3
@@ -446,8 +474,8 @@
   ],
   "dataFlows": [
     {
-      "name": "Global Memory Access",
-      "path": ["gmem", "sm0.warp0_0.regfile0_0", "sm0.warp0_0.cudacores0_0"],
+      "name": "HBM Access",
+      "path": ["hbm_ctrl", "sm0.warp0_0.regfile0_0", "sm0.warp0_0.cudacores0_0"],
       "color": "#D32F2F",
       "duration": 3000
     }

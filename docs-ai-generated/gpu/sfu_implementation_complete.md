@@ -38,7 +38,7 @@ sbt "testOnly gpu.SFUTest gpu.SFUIntegrationTest gpu.SFUDebugTest"
 
 - SFU 单元计算正确。
 - EXP 结果写回目标寄存器。
-- `LD -> EXP -> ST` 能把结果写回 GlobalMem。
+- `LD -> EXP -> ST` 能把结果写回 HBM-backed GlobalMem。
 
 ## 结论
 

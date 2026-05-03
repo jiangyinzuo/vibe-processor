@@ -21,7 +21,7 @@
 - 每个 SM 内仍保留 4 个轻量级 WarpContext，即 2 CTA × 2 Warp/CTA
 - 每个 SM 显式拆成 2 个 SMSubPartition，每个分区管理 2 个 WarpContext、1 个 WarpScheduler 和 1 组 lane 执行单元
 - SharedRegisterFile、SharedMem 和访存请求路径仍是 SM 级共享资源，不再保留每 Warp 独占执行单元的旧实现
-- 共享 GlobalMem 和 InstrMem，每个 SM 有私有 SharedMem
+- 共享 HBM-backed GlobalMem 和 InstrMem，每个 SM 有私有 SharedMem
 
 ---
 
@@ -69,7 +69,7 @@ ADD  R2, R1, R12       ; R2 = global thread id
 当前限制：
 
 - 只实现 1D `threadIdx.x` / `blockIdx.x`。
-- `blockDim.x` 还不是硬件特殊寄存器，示例测试通过 GlobalMem 常量加载。
+- `blockDim.x` 还不是硬件特殊寄存器，示例测试通过 HBM-backed GlobalMem 常量加载。
 - 尚未实现 CTA 级 barrier、每 CTA shared memory 分区、block-level synchronization。
 
 ---
@@ -111,7 +111,7 @@ regs[0][3][R2] != regs[1][3][R2]
   - SubPartition 0: Scheduler 0 管理 Warp 0, 1，拥有 lane 0..3 执行单元
   - SubPartition 1: Scheduler 1 管理 Warp 2, 3，拥有 lane 4..7 执行单元
   - 每周期可并行执行 2 个 Warp（如果资源允许）
-  - 资源仲裁：GlobalMem 和 SharedMem 优先级仲裁
+  - 资源仲裁：HBM Controller 和 SharedMem 优先级仲裁
 ```
 
 **性能观察**：
@@ -172,7 +172,7 @@ scheduler.io.warpHalted(w) :=
 
 | 层级 | 类型 | 深度 | 延迟 | 共享范围 |
 |------|------|------|------|----------|
-| GlobalMem | Mem | 4096 | Warp 内计数器 (默认10) | 全局 (4 SM 共享) |
+| HBM-backed GlobalMem | HbmController + HbmModel | 4096 | HBM controller arbitration + model latency (默认10) | 全局 (4 SM 共享) |
 | SharedMem (per-SM) | SyncReadMem | 256 | 1 cycle | SM 内 |
 | SharedRegisterFile | Reg | 4 Warp × 4 Lane × 16 Reg | 0 | SM 内 |
 
@@ -188,8 +188,8 @@ scheduler.io.warpHalted(w) :=
 |--------|--------|------|
 | 0x0 | NOP | 空操作 |
 | 0x1 | HALT | 停机 (当前 Warp) |
-| 0x2 | LD | Rd = GlobalMem[Rs1 + imm] |
-| 0x3 | ST | GlobalMem[Rs1 + imm] = Rs2 |
+| 0x2 | LD | Rd = HBM-backed GlobalMem[Rs1 + imm] |
+| 0x3 | ST | HBM-backed GlobalMem[Rs1 + imm] = Rs2 |
 | 0x4 | ADD | Rd = Rs1 + Rs2 |
 | 0x5 | MUL | Rd = Rs1 × Rs2 |
 | 0x6 | MAD | Rd = Rs1 × Rs2 + Rs3 |
@@ -207,12 +207,12 @@ scheduler.io.warpHalted(w) :=
 4 SM 并行
 
 性能：
-  总周期：39
-  Live Warp 周期：119
-  Eligible Warp 周期：103
-  Stalled Warp 周期：16
+  总周期：73
+  Live Warp 周期：258
+  Eligible Warp 周期：171
+  Stalled Warp 周期：87
   No-eligible 周期：0
-  说明：默认每 SM 执行 2 个 resident CTA，共 4 个 resident Warp
+  说明：4 个 SM 共享一个 HBM Controller；这里报告最后完成的 SM 计数
 ```
 
 ### 向量加法 (latency=10)
@@ -222,30 +222,32 @@ scheduler.io.warpHalted(w) :=
 4 SM 并行
 
 性能：
-  总周期：50
-  Live Warp 周期：190
-  Eligible Warp 周期：102
-  Stalled Warp 周期：88
-  No-eligible 周期：14
-  说明：访存等待明显增加，但只有 14 个周期完全没有 Ready warp
+  总周期：384
+  Live Warp 周期：1393
+  Eligible Warp 周期：658
+  Stalled Warp 周期：735
+  No-eligible 周期：28
+  说明：HBM model 读延迟和 HBM Controller 全局仲裁共同拉长执行时间
 ```
 
 ### CTA/thread/block ID 验证
 
 ```
 测试：1 SM，4 CTA，MaxCTAsPerSM=2，WarpsPerCTA=2
-程序：读取 R12/R14，计算 blockIdx.x * blockDim.x + threadIdx.x，并写回 GlobalMem
-结果：83 cycles，ctaLaunches=4，ctaCompletions=4
+程序：读取 R12/R14，计算 blockIdx.x * blockDim.x + threadIdx.x，并写回 HBM-backed GlobalMem
+结果：86 cycles，ctaLaunches=4，ctaCompletions=4
 验证：每个 CTA 写回 threadIdx=[0,1,2,3] 和 [4,5,6,7]，blockIdx 与 CTA ID 一致
 ```
 
 ### 调度延迟隐藏指标
 
+以下为 `gpu.DualSchedulerTest` 中单 SM 的性能计数；该测试已经把 global memory 接到 HBM Controller + HBM Model。
+
 | 测试场景 | total | eligible | stalled | no-eligible | 结论 |
 |---------|------:|---------:|--------:|------------:|------|
 | **纯计算（10条ADD）** | 85 | 252 | 0 | 0 | 无访存等待 |
-| **内存密集（latency=10）** | 50 | 102 | 88 | 14 | 访存等待被部分隐藏 |
-| **混合程序（latency=5）** | 62 | 214 | 24 | 2 | 大多数等待被覆盖 |
+| **内存密集（latency=10）** | 113 | 128 | 206 | 23 | 访存等待与 HBM 争用同时存在 |
+| **混合程序（latency=5）** | 75 | 220 | 46 | 0 | 大多数等待被覆盖 |
 
 ---
 
@@ -299,7 +301,7 @@ src/main/scala/gpu/
 ├── SharedRegisterFile.scala  # SM 级共享寄存器文件
 ├── InstructionDispatcher.scala # 指令分发、访存请求、写回
 ├── SM.scala                # 唯一保留的 SM 实现（共享架构）
-└── ToyGpuTop.scala         # 顶层 (4×SM + GlobalMem)
+└── ToyGpuTop.scala         # 顶层 (4×SM + HBM-backed GlobalMem)
 ```
 
 ---

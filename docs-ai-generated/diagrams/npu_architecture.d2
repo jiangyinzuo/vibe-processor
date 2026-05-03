@@ -23,10 +23,21 @@ vars: {
   border-color: "#37474F"
 }
 
-HBM: HBM\n片外 LatencyMem\n4096×128b\nLatency=10 {
+HBM: HBM Model\n仿真外部存储\n4096×128b\nLatency=10 {
   shape: cylinder
   style: {
     fill: "#CFD8DC"
+    stroke: ${border-color}
+    stroke-width: 3
+    font-size: 14
+    bold: true
+  }
+}
+
+HBMCTRL: HBM Controller\n计算 die 侧接口\nreq/resp boundary {
+  shape: rectangle
+  style: {
+    fill: "#FFE0B2"
     stroke: ${border-color}
     stroke-width: 3
     font-size: 14
@@ -46,7 +57,15 @@ L2: L2 Buffer\n片上共享\n2048×128b {
   }
 }
 
-HBM -> L2: 外部预加载 {
+HBMCTRL -> HBM: model req/resp {
+  style: {
+    stroke: "#546E7A"
+    stroke-width: 3
+    font-size: 12
+  }
+}
+
+HBM -> L2: 测试预加载 {
   style: {
     stroke: "#546E7A"
     stroke-width: 3

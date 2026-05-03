@@ -33,7 +33,17 @@ npu: 昇腾 NPU {
     shadow: true
   }
 
-  hbm: HBM\n片外 4096×128b\nLatency=10 {
+  hbmCtrl: HBM Controller\n计算 die 侧接口 {
+    shape: rectangle
+    style: {
+      fill: "#FFE0B2"
+      stroke: ${border-color}
+      stroke-width: 3
+      font-size: 13
+      bold: true
+    }
+  }
+  hbm: HBM Model\n仿真外部存储\n4096×128b\nLatency=10 {
     shape: cylinder
     style: {
       fill: ${hbm-color}
@@ -74,7 +84,14 @@ npu: 昇腾 NPU {
     }
   }
 
-  hbm -> l2: 外部预加载 {
+  hbmCtrl -> hbm: req / resp {
+    style: {
+      stroke: "#546E7A"
+      stroke-width: 3
+      font-size: 12
+    }
+  }
+  hbm -> l2: 测试预加载 {
     style: {
       stroke: "#546E7A"
       stroke-width: 3
@@ -109,7 +126,17 @@ gpu: 英伟达 GPU {
     shadow: true
   }
 
-  gmem: GlobalMem\n片外 4096×128b\nLatency=10 (Warp内) {
+  hbmCtrl: HBM Controller\n全局仲裁 {
+    shape: rectangle
+    style: {
+      fill: "#FFE0B2"
+      stroke: ${border-color}
+      stroke-width: 3
+      font-size: 13
+      bold: true
+    }
+  }
+  gmem: HBM Model\n片外 4096×128b\nLatency=10 {
     shape: cylinder
     style: {
       fill: ${hbm-color}
@@ -140,7 +167,15 @@ gpu: 英伟达 GPU {
     }
   }
 
-  gmem -> reg: LD / ST\n(含延迟等待) {
+  hbmCtrl -> gmem: req / resp {
+    style: {
+      stroke: "#546E7A"
+      stroke-width: 3
+      font-size: 12
+      bold: true
+    }
+  }
+  hbmCtrl -> reg: LD / ST\n(含延迟等待) {
     style: {
       stroke: "#C62828"
       stroke-width: 3

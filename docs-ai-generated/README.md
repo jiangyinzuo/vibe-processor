@@ -14,7 +14,7 @@
 ## 当前性能观察
 
 - NPU `OverlapBenchmark` 流水版相对顺序版少 206 cycles，平均每 tile 从 346.0 cycles 降至 277.3 cycles。
-- GPU VADD 在 `gmemLatency=10` 下有 88 个 stalled warp-cycle，但只有 14 个 no-eligible cycles。
+- GPU 单 SM 内存密集用例在 `gmemLatency=10` 下有 206 个 stalled warp-cycle 和 23 个 no-eligible cycles；4-SM VADD 还会受到共享 HBM Controller 仲裁影响。
 
 详见 [性能对比](docs/performance_comparison.md) 和 [项目状态](PROJECT_STATUS.md)。
 

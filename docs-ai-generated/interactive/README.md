@@ -49,9 +49,9 @@ python3 -m http.server 8000
   "modules": [
     {
       "id": "hbm",
-      "name": "HBM",
+      "name": "HBM Model",
       "type": "memory",
-      "description": "片外 LatencyMem\\n4096×128b\\nLatency=10",
+      "description": "片外 HBM Model\\n4096×128b\\nLatency=10",
       "position": { "x": 100, "y": 50 },
       "size": { "width": 180, "height": 120 },
       "style": {
@@ -63,7 +63,7 @@ python3 -m http.server 8000
       "metadata": {
         "capacity": "4096×128b",
         "latency": 10,
-        "sourceFile": "src/main/scala/common/LatencyMem.scala"
+        "sourceFile": "src/main/scala/common/Hbm.scala"
       },
       "children": []
     }

@@ -109,6 +109,7 @@ class InstructionDispatcher(
       val addr = UInt(GpuParams.GlobalAddrW.W)
       val rdReg = UInt(4.W)
     }))
+    val memReqReady = Input(Bool())
     val memWdata = Output(Vec(warpWidth, SInt(32.W)))
 
     // === Warp 上下文更新 ===
@@ -566,9 +567,10 @@ class InstructionDispatcher(
     memReqWdataVec(s) := Mux(memPendingValid(s), memPendingWdata(s), memCandWdata(s))
   }
 
-  val memReqFire = memReqValidVec.asUInt.orR
+  val memReqHasValid = memReqValidVec.asUInt.orR
+  val memReqFire = memReqHasValid && io.memReqReady
   val memReqSelOH = PriorityEncoderOH(memReqValidVec)
-  io.memReq.valid := memReqFire
+  io.memReq.valid := memReqHasValid
   io.memReq.bits.warpId := Mux1H(memReqSelOH, memReqWarpIdVec)
   io.memReq.bits.isLoad := Mux1H(memReqSelOH, memReqIsLoadVec)
   io.memReq.bits.addr := Mux1H(memReqSelOH, memReqAddrVec)
@@ -589,6 +591,10 @@ class InstructionDispatcher(
       }.otherwise {
         io.warpUpdate(memReqWarpIdVec(s)).valid := true.B
         io.warpUpdate(memReqWarpIdVec(s)).pcInc := true.B
+        when(memPendingValid(s)) {
+          io.warpUpdate(memReqWarpIdVec(s)).setState.valid := true.B
+          io.warpUpdate(memReqWarpIdVec(s)).setState.bits := WarpState.Ready
+        }
       }
 
       when(memPendingValid(s)) {
@@ -603,6 +609,16 @@ class InstructionDispatcher(
       memPendingAddr(s) := memCandAddr(s)
       memPendingRd(s) := memCandRd(s)
       memPendingWdata(s) := memCandWdata(s)
+
+      io.warpUpdate(memCandWarpId(s)).valid := true.B
+      io.warpUpdate(memCandWarpId(s)).setState.valid := true.B
+      io.warpUpdate(memCandWarpId(s)).setState.bits := WarpState.Stalled
+      when(memCandIsLoad(s)) {
+        io.warpUpdate(memCandWarpId(s)).setMemWait.valid := true.B
+        io.warpUpdate(memCandWarpId(s)).setMemWait.bits := gmemLatency.U
+        io.warpUpdate(memCandWarpId(s)).setMemRd.valid := true.B
+        io.warpUpdate(memCandWarpId(s)).setMemRd.bits := memCandRd(s)
+      }
     }
   }
   // === S4: 执行单元完成后写回寄存器文件 ===
@@ -633,6 +649,6 @@ class InstructionDispatcher(
   val sfuIssueEvent = io.sfuValid.asUInt.orR
   io.perf.aluIssue := aluIssueEvent
   io.perf.sfuIssue := sfuIssueEvent
-  io.perf.memIssue := io.memReq.valid
+  io.perf.memIssue := memReqFire
   io.perf.dualIssue := aluIssueEvent && sfuIssueEvent
 }
