@@ -9,8 +9,12 @@ class HbmControllerModelHarness(
     n: Int = 4,
     aw: Int = Params.AccWidth,
     depth: Int = 64,
-    latency: Int = 3,
-    addrW: Int = 8
+    rowHitLatency: Int = 1,
+    rowMissLatency: Int = 3,
+    modelLatency: Int = 1,
+    addrW: Int = 8,
+    numChannels: Int = 2,
+    banksPerChannel: Int = 2
 ) extends Module {
   val io = IO(new Bundle {
     val req = Flipped(Decoupled(new HbmRequest(n, aw, addrW)))
@@ -18,8 +22,19 @@ class HbmControllerModelHarness(
     val direct = new HbmDirectPort(n, aw, addrW)
   })
 
-  val controller = Module(new HbmController(n, aw, addrW))
-  val model = Module(new HbmModel(n, aw, depth, latency, addrW))
+  val controller = Module(
+    new HbmController(
+      n = n,
+      aw = aw,
+      addrW = addrW,
+      numChannels = numChannels,
+      banksPerChannel = banksPerChannel,
+      rowHitLatency = rowHitLatency,
+      rowMissLatency = rowMissLatency,
+      requestQueueDepth = 4
+    )
+  )
+  val model = Module(new HbmModel(n, aw, depth, modelLatency, addrW))
 
   controller.io.coreReq <> io.req
   io.resp.valid := controller.io.coreResp.valid
@@ -47,9 +62,18 @@ class HbmTest extends AnyFunSpec with ChiselSim {
     for (i <- 0 until N) dut.io.direct.wdata(i).poke(0.S)
   }
 
+  def waitForResp(dut: HbmControllerModelHarness, maxCycles: Int = 16): Unit = {
+    var cycles = 0
+    while (!dut.io.resp.valid.peek().litToBoolean && cycles < maxCycles) {
+      dut.clock.step()
+      cycles += 1
+    }
+    assert(dut.io.resp.valid.peek().litToBoolean, s"no HBM response within $maxCycles cycles")
+  }
+
   describe("HBM controller/model split") {
     it("reads HBM model data through HBM controller") {
-      simulate(new HbmControllerModelHarness(latency = 3)) { dut =>
+      simulate(new HbmControllerModelHarness(rowMissLatency = 3)) { dut =>
         init(dut)
 
         dut.io.direct.en.poke(true.B)
@@ -67,18 +91,13 @@ class HbmTest extends AnyFunSpec with ChiselSim {
         dut.clock.step()
         dut.io.req.valid.poke(false.B)
 
-        for (_ <- 1 until 3) {
-          assert(!dut.io.resp.valid.peek().litToBoolean)
-          dut.clock.step()
-        }
-
-        assert(dut.io.resp.valid.peek().litToBoolean)
+        waitForResp(dut)
         for (i <- 0 until N) dut.io.resp.bits.rdata(i).expect((i + 10).S)
       }
     }
 
     it("writes through HBM controller and reads back through HBM model direct port") {
-      simulate(new HbmControllerModelHarness(latency = 3)) { dut =>
+      simulate(new HbmControllerModelHarness(rowMissLatency = 3)) { dut =>
         init(dut)
 
         dut.io.req.valid.poke(true.B)
@@ -89,12 +108,39 @@ class HbmTest extends AnyFunSpec with ChiselSim {
         dut.clock.step()
         dut.io.req.valid.poke(false.B)
         dut.io.req.bits.we.poke(false.B)
+        dut.clock.step(8)
 
         dut.io.direct.en.poke(true.B)
         dut.io.direct.we.poke(false.B)
         dut.io.direct.addr.poke(9.U)
         dut.clock.step()
         for (i <- 0 until N) dut.io.direct.rdata(i).expect((100 + i).S)
+      }
+    }
+
+    it("backpressures same-bank requests while another bank can queue") {
+      simulate(new HbmControllerModelHarness(rowHitLatency = 1, rowMissLatency = 4)) { dut =>
+        init(dut)
+
+        dut.io.req.valid.poke(true.B)
+        dut.io.req.bits.we.poke(true.B)
+        dut.io.req.bits.addr.poke(0.U)
+        for (i <- 0 until N) dut.io.req.bits.wdata(i).poke((10 + i).S)
+        assert(dut.io.req.ready.peek().litToBoolean)
+        dut.clock.step()
+
+        // Address mapping with 2 channels and 2 banks:
+        // addr[0] = channel, addr[1] = bank, addr[7:2] = row.
+        // 0 and 4 target the same channel/bank but different rows.
+        dut.io.req.bits.addr.poke(4.U)
+        assert(!dut.io.req.ready.peek().litToBoolean)
+
+        // Address 1 targets a different channel, so it can be accepted while bank 0 is busy.
+        dut.io.req.bits.addr.poke(1.U)
+        assert(dut.io.req.ready.peek().litToBoolean)
+        dut.clock.step()
+
+        dut.io.req.valid.poke(false.B)
       }
     }
   }

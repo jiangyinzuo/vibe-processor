@@ -127,8 +127,8 @@ L2 -> MTE2 -> UB -> MTE1 -> Cube input FIFO -> Cube -> L0C -> MTE3 -> UB -> MTE2
 
 | 层级 | 当前实现 | 容量/形状 | 共享范围 |
 |---|---|---:|---|
-| HBM Controller | `HbmController` | 请求/响应边界 | 顶层全局 |
-| HBM Model | `HbmModel` 内部包裹 `LatencyMem` | 4096 行，默认 10 cycle latency | 仿真外部存储 |
+| HBM Controller | `HbmController` | 请求/响应边界 + 简化 row/bank 时序 | 顶层全局 |
+| HBM Model | `HbmModel` 内部包裹 `LatencyMem` | 4096 行，1 cycle storage backend | 仿真外部存储 |
 | L2 Buffer | `Mem` | 2048 行 | 多 AiCore 共享 |
 | UB | `UnifiedBuffer` | 每核 256 行 | AiCore 私有 |
 | L0 activation FIFO | `CubeCore.l0a` | 4 个 16x16 tile slot | CubeCore 私有 |
@@ -136,6 +136,8 @@ L2 -> MTE2 -> UB -> MTE1 -> Cube input FIFO -> Cube -> L0C -> MTE3 -> UB -> MTE2
 | L0C | `CubeCore` 内部寄存器 | 1 个 16x16 tile | CubeCore 私有 |
 
 L2 带有外部 preload/readback 端口，服务测试。HBM 路径现在拆成 `HbmController` 和 `HbmModel`：controller 表示计算 die 侧的控制器边界，model 表示仿真环境中的外部 HBM stack。当前 AiCore 实际执行路径只访问 L2，不直接访问 HBM；`ToyAscendTop` 里 `HbmController` 的 core-facing request 口仍置为空闲。
+
+真实 HBM 不是单一线性存储体，而是由 stack、channel/pseudo-channel、bank/bank group 和 row buffer 组成的多层 DRAM 系统。当前 `HbmController` 只实现了简化的 row/bank 时序和队列；真实 HBM Controller 还需要进行地址映射、请求调度、读写切换、刷新、QoS 和 ECC 处理。详见 [HBM 真实结构与控制器职责](../hbm_architecture.md)。
 
 UB 有两个端口：
 

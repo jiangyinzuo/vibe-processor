@@ -111,35 +111,35 @@ ST [base + 2], R2
 HALT
 ```
 
-以下表格报告 `gpu.GpuIntegrationTest` 中 4-SM VADD 最后完成的 SM 计数。由于所有 SM 共享一个 HBM Controller，总周期包含控制器仲裁和排队。
+以下表格报告 `gpu.GpuIntegrationTest` 中 4-SM VADD 最后完成的 SM 计数。由于所有 SM 共享一个 HBM Controller，总周期包含控制器仲裁、bank/row 时序和排队。
 
-### 5.1 HBM model latency = 1
-
-| 指标 | 数值 |
-|---|---:|
-| total cycles | 73 |
-| live warp cycles | 258 |
-| eligible warp cycles | 171 |
-| stalled warp cycles | 87 |
-| no-eligible cycles | 0 |
-| ALU issue cycles | 4 |
-| memory issue cycles | 12 |
-| warp 占用率 | 88.4% |
-
-### 5.2 HBM model latency = 10
+### 5.1 HBM controller row-miss latency = 1
 
 | 指标 | 数值 |
 |---|---:|
-| total cycles | 384 |
-| live warp cycles | 1393 |
-| eligible warp cycles | 658 |
-| stalled warp cycles | 735 |
-| no-eligible cycles | 28 |
+| total cycles | 143 |
+| live warp cycles | 423 |
+| eligible warp cycles | 147 |
+| stalled warp cycles | 276 |
+| no-eligible cycles | 42 |
 | ALU issue cycles | 4 |
 | memory issue cycles | 12 |
-| warp 占用率 | 90.7% |
+| warp 占用率 | 74.0% |
 
-访存延迟从 1 增加到 10 后，4-SM 总周期从 73 增加到 384。这个变化不是单个 warp 延迟的简单线性放大，而是 HBM Controller 单入口仲裁、HBM model 读延迟和多个 SM 同时访存共同作用。单 SM 的 `DualSchedulerTest` 中，memory-dense latency=10 用例为 `totalCycles=113`、`stalledWarpCycles=206`、`noEligibleCycles=23`，说明 warp 切换仍能隐藏部分等待，但不能消除 HBM 侧排队。
+### 5.2 HBM controller row-miss latency = 10
+
+| 指标 | 数值 |
+|---|---:|
+| total cycles | 259 |
+| live warp cycles | 820 |
+| eligible warp cycles | 241 |
+| stalled warp cycles | 579 |
+| no-eligible cycles | 83 |
+| ALU issue cycles | 4 |
+| memory issue cycles | 12 |
+| warp 占用率 | 79.1% |
+
+访存延迟从 1 增加到 10 后，4-SM 总周期从 143 增加到 259。这个变化不是单个 warp 延迟的简单线性放大，而是 HBM Controller 的 bank/row 时序、请求排队和多个 SM 同时访存共同作用。单 SM 的 `DualSchedulerTest` 中，memory-dense latency=10 用例为 `totalCycles=110`、`stalledWarpCycles=205`、`noEligibleCycles=22`，说明 warp 切换仍能隐藏部分等待，但不能消除 HBM 侧排队。
 
 ## 6. 矩阵乘场景的可比性
 
@@ -173,7 +173,7 @@ HALT
 
 1. 当前 NPU 模型的优势在于已经具备专用 16x16 Cube tile 和显式数据流机制，但端到端效率仍主要受 MTE2 搬运、CopyIn/CopyOut 和同步边界限制。
 2. task queue 与 token wait 的价值体现在多 tile 场景：流水版 `OverlapBenchmark` 比顺序版减少 206 cycles，平均每 tile 从 346.0 cycles 降到 277.3 cycles。
-3. 当前 GPU 模型同时展示 SIMT 延迟隐藏和 HBM 侧争用：4-SM VADD 在 `gmemLatency=10` 下会被共享 HBM Controller 明显拉长，单 SM 调度测试仍能看到部分访存等待被 ready warp 覆盖。
+3. 当前 GPU 模型同时展示 SIMT 延迟隐藏和 HBM 侧争用：4-SM VADD 在 `gmemLatency=10` 下会被共享 HBM Controller 的 bank/row 时序和排队拉长，单 SM 调度测试仍能看到部分访存等待被 ready warp 覆盖。
 4. 当前仓库还不能做 Cube Core 与 Tensor Core 的直接性能结论。直接比较需要在同一模型内实现 GPU 矩阵乘或 Tensor Core，并统一数据类型、tile 大小、访存层次和调度策略。
 
 ## 9. 复现实验

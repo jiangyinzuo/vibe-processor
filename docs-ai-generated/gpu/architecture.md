@@ -172,9 +172,11 @@ scheduler.io.warpHalted(w) :=
 
 | 层级 | 类型 | 深度 | 延迟 | 共享范围 |
 |------|------|------|------|----------|
-| HBM-backed GlobalMem | HbmController + HbmModel | 4096 | HBM controller arbitration + model latency (默认10) | 全局 (4 SM 共享) |
+| HBM-backed GlobalMem | HbmController + HbmModel | 4096 | HBM controller row timing + 1-cycle storage backend | 全局 (4 SM 共享) |
 | SharedMem (per-SM) | SyncReadMem | 256 | 1 cycle | SM 内 |
 | SharedRegisterFile | Reg | 4 Warp × 4 Lane × 16 Reg | 0 | SM 内 |
+
+真实 HBM 内部还有 stack、channel/pseudo-channel、bank/bank group 和 row buffer 等层次。当前 GPU 模型中的 `HbmController` 已经包含简化的 channel/bank/row 时序，但仍没有建模真实 channel 级并行、bank group 争用、刷新和 ECC。`HbmModel` 只负责存储后端。详见 [HBM 真实结构与控制器职责](../hbm_architecture.md)。
 
 ---
 
@@ -207,11 +209,11 @@ scheduler.io.warpHalted(w) :=
 4 SM 并行
 
 性能：
-  总周期：73
-  Live Warp 周期：258
-  Eligible Warp 周期：171
-  Stalled Warp 周期：87
-  No-eligible 周期：0
+  总周期：143
+  Live Warp 周期：423
+  Eligible Warp 周期：147
+  Stalled Warp 周期：276
+  No-eligible 周期：42
   说明：4 个 SM 共享一个 HBM Controller；这里报告最后完成的 SM 计数
 ```
 
@@ -222,12 +224,12 @@ scheduler.io.warpHalted(w) :=
 4 SM 并行
 
 性能：
-  总周期：384
-  Live Warp 周期：1393
-  Eligible Warp 周期：658
-  Stalled Warp 周期：735
-  No-eligible 周期：28
-  说明：HBM model 读延迟和 HBM Controller 全局仲裁共同拉长执行时间
+  总周期：259
+  Live Warp 周期：820
+  Eligible Warp 周期：241
+  Stalled Warp 周期：579
+  No-eligible 周期：83
+  说明：HBM Controller 的 row/bank 时序和全局排队共同拉长执行时间
 ```
 
 ### CTA/thread/block ID 验证
@@ -235,7 +237,7 @@ scheduler.io.warpHalted(w) :=
 ```
 测试：1 SM，4 CTA，MaxCTAsPerSM=2，WarpsPerCTA=2
 程序：读取 R12/R14，计算 blockIdx.x * blockDim.x + threadIdx.x，并写回 HBM-backed GlobalMem
-结果：86 cycles，ctaLaunches=4，ctaCompletions=4
+结果：113 cycles，ctaLaunches=4，ctaCompletions=4
 验证：每个 CTA 写回 threadIdx=[0,1,2,3] 和 [4,5,6,7]，blockIdx 与 CTA ID 一致
 ```
 
@@ -246,8 +248,8 @@ scheduler.io.warpHalted(w) :=
 | 测试场景 | total | eligible | stalled | no-eligible | 结论 |
 |---------|------:|---------:|--------:|------------:|------|
 | **纯计算（10条ADD）** | 85 | 252 | 0 | 0 | 无访存等待 |
-| **内存密集（latency=10）** | 113 | 128 | 206 | 23 | 访存等待与 HBM 争用同时存在 |
-| **混合程序（latency=5）** | 75 | 220 | 46 | 0 | 大多数等待被覆盖 |
+| **内存密集（latency=10）** | 110 | 126 | 205 | 22 | 访存等待与 HBM 争用同时存在 |
+| **混合程序（latency=5）** | 77 | 226 | 50 | 0 | 大多数等待被覆盖 |
 
 ---
 

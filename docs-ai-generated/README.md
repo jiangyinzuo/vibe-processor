@@ -14,7 +14,7 @@
 ## 当前性能观察
 
 - NPU `OverlapBenchmark` 流水版相对顺序版少 206 cycles，平均每 tile 从 346.0 cycles 降至 277.3 cycles。
-- GPU 单 SM 内存密集用例在 `gmemLatency=10` 下有 206 个 stalled warp-cycle 和 23 个 no-eligible cycles；4-SM VADD 还会受到共享 HBM Controller 仲裁影响。
+- GPU 单 SM 内存密集用例在 `gmemLatency=10` 下有 205 个 stalled warp-cycle 和 22 个 no-eligible cycles；4-SM VADD 还会受到共享 HBM Controller 的 bank/row 时序和排队影响。
 
 详见 [性能对比](docs/performance_comparison.md) 和 [项目状态](PROJECT_STATUS.md)。
 
@@ -68,6 +68,7 @@
 
 ### 根目录
 
+- `hbm_architecture.md`：真实 HBM 的 stack/channel/bank/row 层次和 HBM Controller 职责。
 - `performance_comparison.md`：当前 toy 模型的性能对比和可比性边界。
 - `frequency_performance.md`：cycles 与 Fmax 的联合估算。
 - `ascend_npu_nvidia_gpu_design_philosophy.md`：从第一性原理解释两类芯片的设计思想。

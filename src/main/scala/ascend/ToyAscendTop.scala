@@ -74,13 +74,24 @@ class ToyAscendTop(
   // Real hardware would keep the HBM stack outside the compute die and connect through
   // controller/PHY IP. The toy top instantiates a controller plus an HBM model so simulation still
   // has preload/readback storage.
-  val hbmController = Module(new HbmController(n, aw, AscendParams.HBMAddrW))
+  val hbmController = Module(
+    new HbmController(
+      n = n,
+      aw = aw,
+      addrW = AscendParams.HBMAddrW,
+      numChannels = 4,
+      banksPerChannel = 4,
+      rowHitLatency = math.max(1, hbmLatency / 3),
+      rowMissLatency = hbmLatency,
+      requestQueueDepth = 8
+    )
+  )
   val hbmModel = Module(
     new HbmModel(
       n = n,
       aw = aw,
       depth = AscendParams.HBMDepth,
-      latency = hbmLatency,
+      latency = 1,
       addrW = AscendParams.HBMAddrW
     )
   )

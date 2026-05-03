@@ -51,15 +51,26 @@ class ToyGpuTop(
   val imem = Mem(GpuParams.IMEMDepth, UInt(GpuParams.InstrWidth.W))
   when(io.imemLoadEn) { imem.write(io.imemLoadAddr, io.imemLoadData) }
 
-  // Shared HBM boundary. The controller is on the GPU side; the model is the
-  // external memory stack used by simulation and tests.
-  val hbmController = Module(new HbmController(warpWidth, dw, GpuParams.GlobalAddrW))
+  // Shared HBM boundary. The controller is on the GPU side and models
+  // channel/bank/row timing; the model stores data for simulation and tests.
+  val hbmController = Module(
+    new HbmController(
+      n = warpWidth,
+      aw = dw,
+      addrW = GpuParams.GlobalAddrW,
+      numChannels = 4,
+      banksPerChannel = 4,
+      rowHitLatency = math.max(1, gmemLatency / 3),
+      rowMissLatency = gmemLatency,
+      requestQueueDepth = 16
+    )
+  )
   val hbmModel = Module(
     new HbmModel(
       n = warpWidth,
       aw = dw,
       depth = GpuParams.GlobalDepth,
-      latency = gmemLatency,
+      latency = 1,
       addrW = GpuParams.GlobalAddrW
     )
   )
@@ -105,20 +116,16 @@ class ToyGpuTop(
     }
   }
 
-  hbmController.io.coreReq.valid := smReqValidVec.asUInt.orR
+  val readRoute = Module(new Queue(UInt(smIdW.W), entries = 16))
+  val selectedReqIsRead = !selectedHbmReq.we
+  val canRouteSelectedReq = !selectedReqIsRead || readRoute.io.enq.ready
+  hbmController.io.coreReq.valid := smReqValidVec.asUInt.orR && canRouteSelectedReq
   hbmController.io.coreReq.bits := selectedHbmReq
 
   val hbmCoreReqFire = hbmController.io.coreReq.valid && hbmController.io.coreReq.ready
-  val readRespPending = RegInit(false.B)
-  val readRespSmId = RegInit(0.U(smIdW.W))
-  when(io.start) {
-    readRespPending := false.B
-  }.elsewhen(hbmCoreReqFire && !hbmController.io.coreReq.bits.we) {
-    readRespPending := true.B
-    readRespSmId := selectedSmId
-  }.elsewhen(hbmController.io.coreResp.valid) {
-    readRespPending := false.B
-  }
+  readRoute.io.enq.valid := hbmCoreReqFire && !hbmController.io.coreReq.bits.we
+  readRoute.io.enq.bits := selectedSmId
+  readRoute.io.deq.ready := hbmController.io.coreResp.valid
 
   ctaScheduler.io.start := io.start
   io.allHalted := ctaScheduler.io.allDone
@@ -135,9 +142,9 @@ class ToyGpuTop(
       sm.io.imemData(w) := imem.read(sm.io.imemAddr(w))
     }
 
-    sm.io.hbmReq.ready := smReqSelOH(i) && hbmController.io.coreReq.ready
-    sm.io.hbmResp.valid := hbmController.io.coreResp.valid && readRespPending &&
-      readRespSmId === i.U
+    sm.io.hbmReq.ready := smReqSelOH(i) && hbmController.io.coreReq.ready && canRouteSelectedReq
+    sm.io.hbmResp.valid := hbmController.io.coreResp.valid && readRoute.io.deq.valid &&
+      readRoute.io.deq.bits === i.U
     sm.io.hbmResp.bits := hbmController.io.coreResp.bits
 
     io.perf(i) := sm.io.perf

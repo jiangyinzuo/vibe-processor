@@ -35,17 +35,30 @@ class HbmDirectPort(
   val rdata = Output(Vec(n, SInt(aw.W)))
 }
 
-/** Toy HBM controller.
+/** HBM controller timing model.
   *
-  * This module is the compute-die side of the HBM boundary. It currently forwards one in-flight
-  * request stream to the HBM model. Later it is the right place to add address mapping, burst
-  * splitting, bank scheduling, refresh/ECC modeling, QoS, and PHY-facing protocol details.
+  * This module is the compute-die side of the HBM boundary. It decodes line addresses into a
+  * simplified channel/bank/row mapping, tracks per-bank row state, applies row-hit/row-miss timing,
+  * and queues accepted requests before issuing them to the memory model.
   */
 class HbmController(
     val n: Int,
     val aw: Int,
-    val addrW: Int
+    val addrW: Int,
+    val numChannels: Int = 4,
+    val banksPerChannel: Int = 4,
+    val rowHitLatency: Int = 3,
+    val rowMissLatency: Int = 10,
+    val requestQueueDepth: Int = 8
 ) extends Module {
+  require(numChannels > 0, "numChannels must be positive")
+  require(banksPerChannel > 0, "banksPerChannel must be positive")
+  require(isPow2(numChannels), "numChannels must be a power of two")
+  require(isPow2(banksPerChannel), "banksPerChannel must be a power of two")
+  require(rowHitLatency >= 1, "rowHitLatency must be >= 1")
+  require(rowMissLatency >= rowHitLatency, "rowMissLatency must be >= rowHitLatency")
+  require(requestQueueDepth > 0, "requestQueueDepth must be positive")
+
   val io = IO(new Bundle {
     val coreReq = Flipped(Decoupled(new HbmRequest(n, aw, addrW)))
     val coreResp = Valid(new HbmResponse(n, aw))
@@ -54,9 +67,89 @@ class HbmController(
     val memResp = Flipped(Valid(new HbmResponse(n, aw)))
   })
 
-  io.memReq.valid := io.coreReq.valid
-  io.memReq.bits := io.coreReq.bits
-  io.coreReq.ready := io.memReq.ready
+  private val totalBanks = numChannels * banksPerChannel
+  private val channelW = log2Ceil(numChannels)
+  private val bankW = log2Ceil(banksPerChannel)
+  private val bankIndexW = math.max(1, log2Ceil(totalBanks))
+  private val rowLsb = channelW + bankW
+  private val rowW = math.max(1, addrW - rowLsb)
+  private val latencyW = log2Ceil(rowMissLatency + 1).max(1)
+
+  private def channelOf(addr: UInt): UInt =
+    if (channelW == 0) 0.U(1.W) else addr(channelW - 1, 0)
+
+  private def bankOf(addr: UInt): UInt =
+    if (bankW == 0) 0.U(1.W) else addr(rowLsb - 1, channelW)
+
+  private def bankIndexOf(addr: UInt): UInt = {
+    val channel = channelOf(addr)
+    val bank = bankOf(addr)
+
+    if (numChannels == 1 && banksPerChannel == 1) {
+      0.U(bankIndexW.W)
+    } else if (numChannels == 1) {
+      bank.asUInt.pad(bankIndexW)
+    } else if (banksPerChannel == 1) {
+      channel.asUInt.pad(bankIndexW)
+    } else {
+      Cat(channel, bank).asUInt
+    }
+  }
+
+  private def rowOf(addr: UInt): UInt =
+    if (addrW > rowLsb) addr(addrW - 1, rowLsb) else 0.U(rowW.W)
+
+  class HbmQueuedRequest extends Bundle {
+    val req = new HbmRequest(n, aw, addrW)
+    val latency = UInt(latencyW.W)
+  }
+
+  val bankBusy = RegInit(VecInit(Seq.fill(totalBanks)(0.U(latencyW.W))))
+  val bankRowValid = RegInit(VecInit(Seq.fill(totalBanks)(false.B)))
+  val bankActiveRow = Reg(Vec(totalBanks, UInt(rowW.W)))
+
+  for (b <- 0 until totalBanks) {
+    when(bankBusy(b) =/= 0.U) {
+      bankBusy(b) := bankBusy(b) - 1.U
+    }
+  }
+
+  val reqBank = bankIndexOf(io.coreReq.bits.addr)
+  val reqRow = rowOf(io.coreReq.bits.addr)
+  val reqRowHit = bankRowValid(reqBank) && bankActiveRow(reqBank) === reqRow
+  val reqLatency = Mux(reqRowHit, rowHitLatency.U(latencyW.W), rowMissLatency.U(latencyW.W))
+
+  val requestQueue = Module(new Queue(new HbmQueuedRequest, requestQueueDepth))
+  val reqBankAvailable = bankBusy(reqBank) === 0.U
+  requestQueue.io.enq.valid := io.coreReq.valid && reqBankAvailable
+  requestQueue.io.enq.bits.req := io.coreReq.bits
+  requestQueue.io.enq.bits.latency := reqLatency
+  io.coreReq.ready := requestQueue.io.enq.ready && reqBankAvailable
+
+  when(requestQueue.io.enq.fire) {
+    bankBusy(reqBank) := reqLatency
+    bankRowValid(reqBank) := true.B
+    bankActiveRow(reqBank) := reqRow
+  }
+
+  val activeValid = RegInit(false.B)
+  val activeReq = Reg(new HbmRequest(n, aw, addrW))
+  val activeCounter = RegInit(0.U(latencyW.W))
+
+  requestQueue.io.deq.ready := !activeValid
+  when(!activeValid && requestQueue.io.deq.valid) {
+    activeValid := true.B
+    activeReq := requestQueue.io.deq.bits.req
+    activeCounter := requestQueue.io.deq.bits.latency
+  }.elsewhen(activeValid && activeCounter =/= 0.U) {
+    activeCounter := activeCounter - 1.U
+  }
+
+  io.memReq.valid := activeValid && activeCounter === 0.U
+  io.memReq.bits := activeReq
+  when(io.memReq.fire) {
+    activeValid := false.B
+  }
 
   io.coreResp.valid := io.memResp.valid
   io.coreResp.bits := io.memResp.bits

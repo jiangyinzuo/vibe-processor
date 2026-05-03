@@ -511,20 +511,20 @@ sbt "testOnly gpu.InstructionDispatcherMultiIssueTest gpu.DualSchedulerTest gpu.
 | 场景 | total | live warp-cycle | eligible | stalled | no-eligible | ALU issue | MEM issue |
 |---|---:|---:|---:|---:|---:|---:|---:|
 | 纯计算，10 条 ADD | 85 | 252 | 252 | 0 | 0 | 20 | 0 |
-| 内存密集，`LD -> LD -> ADD -> ST`, `latency=10` | 113 | 334 | 128 | 206 | 23 | 4 | 12 |
-| 混合，`LD -> ADD×5 -> ST`, `latency=5` | 75 | 266 | 220 | 46 | 0 | 20 | 8 |
+| 内存密集，`LD -> LD -> ADD -> ST`, `latency=10` | 110 | 331 | 126 | 205 | 22 | 4 | 12 |
+| 混合，`LD -> ADD×5 -> ST`, `latency=5` | 77 | 276 | 226 | 50 | 0 | 17 | 8 |
 
-`gpu.GpuIntegrationTest` 的 4-SM VADD 结果（下表报告最后完成的 SM；SM 之间会因共享 HBM Controller 仲裁而不同）：
+`gpu.GpuIntegrationTest` 的 4-SM VADD 结果（下表报告最后完成的 SM；SM 之间会因共享 HBM Controller 的 bank/row 调度而不同）：
 
 | 场景 | total | live warp-cycle | eligible | stalled | no-eligible | ALU issue | MEM issue |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| VADD, `gmemLatency=1` | 73 | 258 | 171 | 87 | 0 | 4 | 12 |
-| VADD, `gmemLatency=10` | 384 | 1393 | 658 | 735 | 28 | 4 | 12 |
+| VADD, `gmemLatency=1` | 143 | 423 | 147 | 276 | 42 | 4 | 12 |
+| VADD, `gmemLatency=10` | 259 | 820 | 241 | 579 | 83 | 4 | 12 |
 
 关键结论：
 
-- 单 SM 内存密集用例中 `stalledWarpCycles=206`，说明 HBM 等待和请求排队都会形成可观停顿；`noEligibleCycles=23`，说明仍有部分等待暴露到前端。
-- 4-SM VADD 中，latency=10 的总周期显著增加，主要来自多个 SM 共享一个 HBM Controller 后的全局仲裁与排队。
+- 单 SM 内存密集用例中 `stalledWarpCycles=205`，说明 HBM 等待和请求排队都会形成可观停顿；`noEligibleCycles=22`，说明仍有部分等待暴露到前端。
+- 4-SM VADD 中，latency=10 的总周期显著增加，主要来自多个 SM 共享一个 HBM Controller 后的 bank/row 时序和全局排队。
 - 纯计算用例 `stalledWarpCycles=0`、`noEligibleCycles=0`，验证这些计数器没有把普通流水线开销误算成访存等待。
 - 当前 `dualIssueCycles=0` 出现在这些 VADD/ADD/MEM 用例中是正常的；ALU/SFU 同周期发射由 `InstructionDispatcherMultiIssueTest` 单独验证。
 
