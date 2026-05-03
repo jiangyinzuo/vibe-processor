@@ -3,6 +3,21 @@ package ascend
 import chisel3._
 import chisel3.util._
 
+class CopyInTask extends Bundle {
+  val dstSel = UInt(2.W)
+  val ubBase = UInt(AscendParams.UBAddrW.W)
+}
+
+class DmaTask extends Bundle {
+  val isStore = Bool()
+  val l2Base = UInt(AscendParams.L2AddrW.W)
+  val ubBase = UInt(AscendParams.UBAddrW.W)
+}
+
+class CopyOutTask extends Bundle {
+  val ubBase = UInt(AscendParams.UBAddrW.W)
+}
+
 /** MTE1: UB -> L1 staging -> L0A/L0B. */
 class Mte1(
     n: Int = AscendParams.ArraySize,

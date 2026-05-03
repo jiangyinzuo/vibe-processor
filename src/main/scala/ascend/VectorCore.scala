@@ -17,6 +17,7 @@ class VectorCore(
     val op = Input(UInt(2.W))
     val src1Addr = Input(UInt(AscendParams.UBAddrW.W))
     val src2Addr = Input(UInt(AscendParams.UBAddrW.W))
+    val busy = Output(Bool())
     val done = Output(Bool())
 
     val ubEn = Output(Bool())
@@ -42,6 +43,7 @@ class VectorCore(
   io.ubWe := false.B
   io.ubAddr := 0.U
   io.ubWdata := VecInit.fill(n)(0.S(aw.W))
+  io.busy := state =/= sIdle && state =/= sDone
   io.done := state === sDone
 
   vector.io.start := state === sStartVec

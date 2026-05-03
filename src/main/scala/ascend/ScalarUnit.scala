@@ -14,7 +14,24 @@ object Opcode {
   val RELU = 0x6.U(4.W)
   val DMA_LOAD = 0x8.U(4.W)
   val DMA_STORE = 0x9.U(4.W)
-  val DMA_WAIT = 0xa.U(4.W)
+  val WAIT = 0xa.U(4.W)
+  val DMA_WAIT = WAIT
+}
+
+/** WAIT event selector encoded in bits [27:26]. */
+object WaitKind {
+  val ALL = 0.U(2.W)
+  val DMA = 1.U(2.W)
+  val COPY_IN = 2.U(2.W)
+  val COPY_OUT = 3.U(2.W)
+}
+
+/** Stable debug-state numbers used by performance counters. */
+object ScalarDbgState {
+  val Decode = 2.U(4.W)
+  val Matmul = 3.U(4.W)
+  val Vector = 4.U(4.W)
+  val Wait = 5.U(4.W)
 }
 
 /** Buffer select for LOAD/STORE. Existing encodings are preserved. */
@@ -27,9 +44,8 @@ object BufSel {
 
 /** Scalar Unit: instruction fetch, decode, and command dispatch.
   *
-  * The scalar pipeline no longer owns Cube/Vector local data. It issues commands to the decoupled
-  * CubeCore, VectorCore, and MTE engines and waits on their completion when the ISA requires
-  * blocking behavior.
+  * The scalar pipeline does not directly drive MTE engines. It issues dataflow tasks into queues
+  * and uses event tokens to wait only for the producer stage required by the next consumer.
   */
 class ScalarUnit(
     n: Int = AscendParams.ArraySize,
@@ -43,15 +59,14 @@ class ScalarUnit(
     val imemAddr = Output(UInt(8.W))
     val imemData = Input(UInt(AscendParams.InstrWidth.W))
 
-    val mte1Start = Output(Bool())
-    val mte1Busy = Input(Bool())
-    val mte1Done = Input(Bool())
-    val mte1DstSel = Output(UInt(2.W))
-    val mte1UbAddr = Output(UInt(AscendParams.UBAddrW.W))
+    val copyInQueueEnq = Output(Bool())
+    val copyInQueueFull = Input(Bool())
+    val copyInDstSel = Output(UInt(2.W))
+    val copyInUbAddr = Output(UInt(AscendParams.UBAddrW.W))
 
-    val mte3Start = Output(Bool())
-    val mte3Done = Input(Bool())
-    val mte3UbAddr = Output(UInt(AscendParams.UBAddrW.W))
+    val copyOutQueueEnq = Output(Bool())
+    val copyOutQueueFull = Input(Bool())
+    val copyOutUbAddr = Output(UInt(AscendParams.UBAddrW.W))
 
     val cubeStart = Output(Bool())
     val cubeAccumulate = Output(Bool())
@@ -65,19 +80,21 @@ class ScalarUnit(
 
     val dmaQueueEnq = Output(Bool())
     val dmaQueueFull = Input(Bool())
-    val dmaQueueEmpty = Input(Bool())
     val dmaEnqIsStore = Output(Bool())
     val dmaEnqL2Addr = Output(UInt(AscendParams.L2AddrW.W))
     val dmaEnqUbAddr = Output(UInt(AscendParams.UBAddrW.W))
 
+    val waitAllPending = Input(Bool())
+    val waitDmaPending = Input(Bool())
+    val waitCopyInPending = Input(Bool())
+    val waitCopyOutPending = Input(Bool())
+
     val dbgState = Output(UInt(4.W))
     val dbgOpLat = Output(UInt(4.W))
+    val dbgWaitKind = Output(UInt(2.W))
   })
 
-  // Keep enum ordering stable for existing performance-counter logic:
-  // sDecode=2, sMatmul=8, sVec=9, sDmaWait=10.
-  val sIdle :: sFetch :: sDecode :: sLoad0 :: sLoad1 :: sLoad2 :: sStore0 :: sStore1 :: sMatmul :: sVec :: sDmaWait :: sHalted :: Nil =
-    Enum(12)
+  val sIdle :: sFetch :: sDecode :: sMatmul :: sVec :: sWait :: sHalted :: Nil = Enum(7)
 
   val state = RegInit(sIdle)
   val pc = RegInit(0.U(8.W))
@@ -88,6 +105,7 @@ class ScalarUnit(
   val vecSrc1Lat = RegInit(0.U(AscendParams.UBAddrW.W))
   val vecSrc2Lat = RegInit(0.U(AscendParams.UBAddrW.W))
   val cubeAccLat = RegInit(false.B)
+  val waitKindLat = RegInit(WaitKind.ALL)
 
   val instr = io.imemData
   val op = instr(31, 28)
@@ -98,18 +116,20 @@ class ScalarUnit(
   val dmaUbBase = instr(27, 20)
   val dmaL2Base = instr(19, 4)
   val matmulAccumulate = instr(27)
+  val waitKind = instr(27, 26)
 
   io.imemAddr := pc
   io.halted := state === sHalted
   io.dbgState := state.asUInt
   io.dbgOpLat := opLat
+  io.dbgWaitKind := waitKindLat
 
-  io.mte1Start := false.B
-  io.mte1DstSel := dstSelLat
-  io.mte1UbAddr := memAddrLat
+  io.copyInQueueEnq := false.B
+  io.copyInDstSel := dstSelLat
+  io.copyInUbAddr := memAddrLat
 
-  io.mte3Start := false.B
-  io.mte3UbAddr := memAddrLat
+  io.copyOutQueueEnq := false.B
+  io.copyOutUbAddr := memAddrLat
 
   io.cubeStart := false.B
   io.cubeAccumulate := cubeAccLat
@@ -123,6 +143,15 @@ class ScalarUnit(
   io.dmaEnqIsStore := false.B
   io.dmaEnqL2Addr := 0.U
   io.dmaEnqUbAddr := 0.U
+
+  val selectedWaitPending = WireDefault(io.waitAllPending)
+  when(waitKindLat === WaitKind.DMA) {
+    selectedWaitPending := io.waitDmaPending
+  }.elsewhen(waitKindLat === WaitKind.COPY_IN) {
+    selectedWaitPending := io.waitCopyInPending
+  }.elsewhen(waitKindLat === WaitKind.COPY_OUT) {
+    selectedWaitPending := io.waitCopyOutPending
+  }
 
   switch(state) {
     is(sIdle) {
@@ -143,6 +172,7 @@ class ScalarUnit(
       vecSrc1Lat := vecSrc1Addr
       vecSrc2Lat := vecSrc2Addr
       cubeAccLat := matmulAccumulate
+      waitKindLat := waitKind
 
       switch(op) {
         is(Opcode.NOP) {
@@ -153,10 +183,21 @@ class ScalarUnit(
           state := sHalted
         }
         is(Opcode.LOAD) {
-          state := sLoad0
+          when(!io.copyInQueueFull) {
+            io.copyInQueueEnq := true.B
+            io.copyInDstSel := dstSel
+            io.copyInUbAddr := memAddr
+            pc := pc + 1.U
+            state := sFetch
+          }
         }
         is(Opcode.STORE) {
-          state := sStore0
+          when(!io.copyOutQueueFull) {
+            io.copyOutQueueEnq := true.B
+            io.copyOutUbAddr := memAddr
+            pc := pc + 1.U
+            state := sFetch
+          }
         }
         is(Opcode.MATMUL) {
           state := sMatmul
@@ -174,40 +215,9 @@ class ScalarUnit(
             state := sFetch
           }
         }
-        is(Opcode.DMA_WAIT) {
-          state := sDmaWait
+        is(Opcode.WAIT) {
+          state := sWait
         }
-      }
-    }
-
-    is(sLoad0) {
-      when(!io.mte1Busy) {
-        io.mte1Start := true.B
-        io.mte1DstSel := dstSelLat
-        io.mte1UbAddr := memAddrLat
-        pc := pc + 1.U
-        state := sFetch
-      }
-    }
-    is(sLoad1) {
-      when(io.mte1Done) {
-        pc := pc + 1.U
-        state := sFetch
-      }
-    }
-    is(sLoad2) {
-      state := sFetch
-    }
-
-    is(sStore0) {
-      io.mte3Start := true.B
-      io.mte3UbAddr := memAddrLat
-      state := sStore1
-    }
-    is(sStore1) {
-      when(io.mte3Done) {
-        pc := pc + 1.U
-        state := sFetch
       }
     }
 
@@ -230,8 +240,8 @@ class ScalarUnit(
       }
     }
 
-    is(sDmaWait) {
-      when(io.dmaQueueEmpty) {
+    is(sWait) {
+      when(!selectedWaitPending) {
         pc := pc + 1.U
         state := sFetch
       }

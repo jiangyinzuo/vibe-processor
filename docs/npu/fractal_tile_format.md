@@ -94,18 +94,18 @@ GEMM 的 B 矩阵常常需要按和 A 不同的方向喂给阵列。真实昇腾
 | 场景 | 旧 8x8 | 新 16x16 | 变化 |
 |---|---:|---:|---:|
 | 单 tile MAC 数 | 512 | 4096 | 8.00x |
-| 单 tile totalCycles | 182 | 349 | 1.92x |
+| 单 tile totalCycles | 182 | 347 | 1.91x |
 | 单 tile cubeComputeCycles | 15 | 46 | 3.07x |
-| total MAC/cycle | 2.81 | 11.74 | 4.18x |
+| total MAC/cycle | 2.81 | 11.80 | 4.20x |
 | Cube 有效 MAC/cycle | 34.13 | 89.04 | 2.61x |
 
 流水线测试也体现了同样趋势：
 
 | 场景 | totalCycles | cubeComputeCycles | DMA cycles | overlapCycles |
 |---|---:|---:|---:|---:|
-| 16x16 单 tile | 349 | 46 | 144 | 46 |
-| Pipeline3 3 tile | 852 | 138 | 432 | 138 |
-| TripleBuffer 4 tile | 1150 | 184 | 576 | 184 |
+| 16x16 单 tile | 347 | 46 | 144 | 94 |
+| Pipeline3 3 tile | 855 | 138 | 432 | 182 |
+| TripleBuffer 4 tile | 1129 | 184 | 576 | 250 |
 
 结论：
 

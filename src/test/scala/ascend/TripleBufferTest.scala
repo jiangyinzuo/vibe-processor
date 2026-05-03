@@ -19,6 +19,9 @@ class TripleBufferTest extends AnyFunSpec with ChiselSim {
   def encDmaStore(ubBase: Int, l2Base: Int): Long =
     (0x9L << 28) | ((ubBase & 0xff).toLong << 20) | ((l2Base & 0xffff).toLong << 4)
   def encDmaWait: Long = 0xaL << 28
+  def encWaitDma: Long = (0xaL << 28) | (1L << 26)
+  def encWaitCopyIn: Long = (0xaL << 28) | (2L << 26)
+  def encWaitCopyOut: Long = (0xaL << 28) | (3L << 26)
   def encMatmul: Long = 0x4L << 28
   def encHalt: Long = 0x1L << 28
 
@@ -105,43 +108,48 @@ class TripleBufferTest extends AnyFunSpec with ChiselSim {
           // Tile 0: 初始加载
           encDmaLoad(ubBase = 0, l2Base = 0),
           encDmaLoad(ubBase = N, l2Base = N),
-          encDmaWait,
+          encWaitDma,
           encLoad(1, 0), // LOAD 到 buf0
           encLoad(0, N),
+          encWaitCopyIn,
 
           // Tile 1: 预取 + LOAD（与 Tile 0 MATMUL 重叠）
           encDmaLoad(ubBase = 0, l2Base = 2 * N),
           encDmaLoad(ubBase = N, l2Base = 3 * N),
-          encDmaWait,
+          encWaitDma,
           encLoad(1, 0), // LOAD 到 buf1（与 Tile 0 MATMUL 重叠）
           encLoad(0, N),
           encMatmul, // 计算 Tile 0（使用 buf0）
           encStore(2, 2 * N),
+          encWaitCopyOut,
           encDmaStore(ubBase = 2 * N, l2Base = (numTiles * 2) * N),
 
           // Tile 2: 预取 + LOAD（与 Tile 1 MATMUL 重叠）
           encDmaLoad(ubBase = 0, l2Base = 4 * N),
           encDmaLoad(ubBase = N, l2Base = 5 * N),
-          encDmaWait,
+          encWaitDma,
           encLoad(1, 0), // LOAD 到 buf2（与 Tile 1 MATMUL 重叠）
           encLoad(0, N),
           encMatmul, // 计算 Tile 1（使用 buf1）
           encStore(2, 2 * N),
+          encWaitCopyOut,
           encDmaStore(ubBase = 2 * N, l2Base = (numTiles * 2 + 1) * N),
 
           // Tile 3: 预取 + LOAD（与 Tile 2 MATMUL 重叠）
           encDmaLoad(ubBase = 0, l2Base = 6 * N),
           encDmaLoad(ubBase = N, l2Base = 7 * N),
-          encDmaWait,
+          encWaitDma,
           encLoad(1, 0), // LOAD 到 buf0（buf0 已经 free，与 Tile 2 MATMUL 重叠）
           encLoad(0, N),
           encMatmul, // 计算 Tile 2（使用 buf2）
           encStore(2, 2 * N),
+          encWaitCopyOut,
           encDmaStore(ubBase = 2 * N, l2Base = (numTiles * 2 + 2) * N),
 
           // 最后一个 tile
           encMatmul, // 计算 Tile 3（使用 buf0）
           encStore(2, 2 * N),
+          encWaitCopyOut,
           encDmaStore(ubBase = 2 * N, l2Base = (numTiles * 2 + 3) * N),
           encDmaWait,
           encHalt

@@ -9,7 +9,7 @@ import gpu._
 /** 矩阵乘法性能对比：NPU vs GPU
   *
   * 测试场景：
-  *   - NPU: 使用 SystolicArray (4×4 PE) 计算矩阵乘法
+  *   - NPU: 使用 16×16 Cube/SystolicArray 计算带 padding 的 8×8 矩阵乘法
   *   - GPU: 使用 SIMT 模型，每个线程计算一个元素
   *
   * 性能指标：
@@ -56,7 +56,7 @@ class MatmulBenchmark extends AnyFunSpec with ChiselSim {
           writeL2(dut, i + 8, w(i)) // W 矩阵
         }
 
-        // 程序：DMA_LOAD×2 → DMA_WAIT → LOAD×2 → MATMUL → STORE → DMA_STORE → HALT
+        // 程序：DMA_LOAD×2 → WAIT → LOAD×2 → MATMUL → STORE → DMA_STORE → WAIT → HALT
         val program = Seq(
           encDmaLoad(ubBase = 0, l2Base = 0), // DMA: L2[0..7] → UB[0..7] (A)
           encDmaLoad(ubBase = 8, l2Base = 8), // DMA: L2[8..15] → UB[8..15] (W)
@@ -186,9 +186,9 @@ class MatmulBenchmark extends AnyFunSpec with ChiselSim {
       println("=" * 60)
       println("\n架构特点：")
       println("  NPU (昇腾):")
-      println("    - 专用硬件：8×8 SystolicArray")
+      println("    - 专用硬件：16×16 Cube/SystolicArray")
       println("    - 数据流：Weight-Stationary")
-      println("    - 并行度：64 个 PE 同时计算")
+      println("    - 并行度：256 个 PE 同时计算")
       println("    - 内存：显式 DMA + 多级缓存")
       println("\n  GPU (英伟达):")
       println("    - 通用硬件：SIMT 标量 ALU")

@@ -20,18 +20,25 @@
 ```
 docs/npu/
 ├── architecture.md              # NPU 架构详解
-├── architecture_differences.md  # 玩具 vs 真实昇腾差异
+├── ascend_dataflow_design.md    # 昇腾式数据流设计思想
 ├── cubecore_realism_optimization.md # CubeCore 真实化优化
+├── event_token_synchronization.md   # event/token 细粒度同步教程
 ├── dma_overlap.md               # DMA-Compute Overlap 优化
+├── mte_task_queue_data_movement.md  # MTE task queue 数据流教程
+├── fractal_tile_format.md       # 16x16 分形 tile 格式
+├── pe_mac_pipeline.md           # PE MAC 两级流水化
 ├── pipeline_timing_analysis.md  # NPU 流水线时序分析
-├── performance_measurement.md   # 实际性能测量报告
-└── implementation_summary.md    # 实现总结
+└── performance_measurement.md   # 实际性能测量报告
 ```
 
 **快速链接**：
 - [NPU 架构](npu/architecture.md) - Control CPU、AI CPU、SPMD block、收缩阵列、DMA、多核并行
-- [架构差异](npu/architecture_differences.md) - 与真实昇腾的差距分析
+- [昇腾式数据流设计思想](npu/ascend_dataflow_design.md) - CopyIn/Compute/CopyOut、task queue、token wait
 - [CubeCore 真实化优化](npu/cubecore_realism_optimization.md) - Cube 输入快照、L0C 累加和前后性能对比
+- [event/token 同步](npu/event_token_synchronization.md) - 细粒度 WAIT、token scoreboard、UB 复用边界
+- [MTE task queue 数据流](npu/mte_task_queue_data_movement.md) - CopyIn/DMA/CopyOut 队列化与数据搬运一等公民
+- [分形 Tile 格式](npu/fractal_tile_format.md) - 16x16 Cube tile、pack/unpack、tail padding
+- [PE MAC 流水化](npu/pe_mac_pipeline.md) - PE 乘法/加法拆分和阵列时序
 - [DMA Overlap](npu/dma_overlap.md) - 非阻塞 DMA、双缓冲、性能优化
 - [NPU 流水线时序分析](npu/pipeline_timing_analysis.md) - Yosys LTP、OpenSTA 粗估和切分优先级
 - [性能测量](npu/performance_measurement.md) - 实际加速比 1.22×，重叠率 24.1%
@@ -56,12 +63,14 @@ docs/gpu/
 ```
 docs/
 ├── performance_comparison.md    # NPU vs GPU 性能对比
+├── ascend_npu_nvidia_gpu_design_philosophy.md # 昇腾 NPU 与 NVIDIA GPU 设计思想
 ├── frequency_performance.md     # cycles × Fmax 运行时间估算
 └── isa.md                       # 指令集说明
 ```
 
 **快速链接**：
 - [性能对比](performance_comparison.md) - 矩阵乘法性能分析
+- [设计思想](ascend_npu_nvidia_gpu_design_philosophy.md) - 从第一性原理解释昇腾 NPU 与 NVIDIA GPU
 - [频率与周期联合评估](frequency_performance.md) - cycles × Fmax 运行时间估算
 - [指令集](isa.md) - NPU 和 GPU 指令格式
 
@@ -90,24 +99,28 @@ docs/interactive/
 
 1. [NPU 架构](npu/architecture.md) - Control CPU、AI CPU、SPMD block、收缩阵列、DMA、多核
 2. [DMA Overlap](npu/dma_overlap.md) - 非阻塞 DMA、双缓冲优化
-3. [架构差异](npu/architecture_differences.md) - 与真实昇腾对比
-4. [CubeCore 真实化优化](npu/cubecore_realism_optimization.md) - Cube 输入快照、L0C 累加
-5. [性能对比](performance_comparison.md) - 性能分析
-6. [频率与周期联合评估](frequency_performance.md) - cycles × Fmax 估算运行时间
+3. [event/token 同步](npu/event_token_synchronization.md) - 细粒度 WAIT 和 token scoreboard
+4. [MTE task queue 数据流](npu/mte_task_queue_data_movement.md) - 数据搬运一等公民
+5. [CubeCore 真实化优化](npu/cubecore_realism_optimization.md) - Cube 输入快照、L0C 累加
+6. [性能对比](performance_comparison.md) - 性能分析
+7. [频率与周期联合评估](frequency_performance.md) - cycles × Fmax 估算运行时间
 
 ### 深入理解 GPU（1.5 小时）
 
 1. [GPU 架构](gpu/architecture.md) - SIMT、双调度器
 2. [Warp 调度](gpu/warp_scheduling.md) - 调度算法详解
 3. [双调度器](gpu/dual_scheduler_summary.md) - 性能提升
-4. [性能对比](performance_comparison.md) - 与 NPU 对比
+4. [设计思想](ascend_npu_nvidia_gpu_design_philosophy.md) - 从第一性原理理解 GPU 与 NPU 的不同目标函数
+5. [性能对比](performance_comparison.md) - 与 NPU 对比
 
 ### 性能优化（45 分钟）
 
 1. [DMA Overlap](npu/dma_overlap.md) - 计算与传输重叠
 2. [性能对比](performance_comparison.md) - 瓶颈分析
 3. [双调度器](gpu/dual_scheduler_summary.md) - 并行优化
-4. [CubeCore 真实化优化](npu/cubecore_realism_optimization.md) - 真实硬件优化
+4. [event/token 同步](npu/event_token_synchronization.md) - 真实硬件式 token wait
+5. [MTE task queue 数据流](npu/mte_task_queue_data_movement.md) - 真实硬件式 MTE 队列
+6. [CubeCore 真实化优化](npu/cubecore_realism_optimization.md) - 真实硬件优化
 
 ---
 
@@ -115,7 +128,7 @@ docs/interactive/
 
 | 类别 | 文档数 | 总行数 |
 |------|--------|--------|
-| **NPU** | 2 | 608 |
+| **NPU** | 10 | - |
 | **GPU** | 3 | 1035 |
 | **对比** | 2 | 404 |
 | **交互** | 1 | - |
@@ -134,7 +147,7 @@ docs/interactive/
 - 昇腾为什么强调 CopyIn/Compute/CopyOut？→ [昇腾式数据流设计思想](npu/ascend_dataflow_design.md)
 - NPU 的 SPMD blockDim/blockIdx 如何工作？→ [NPU 架构](npu/architecture.md#2-spmd-编程模型)
 - NPU 的 DMA 机制？→ [NPU 架构](npu/architecture.md#3-存储层次)
-- 玩具 NPU 和真实昇腾的差距？→ [架构差异](npu/architecture_differences.md)
+- 玩具 NPU 和真实昇腾的差距？→ [NPU 架构：与真实昇腾的差异](npu/architecture.md#8-与真实昇腾的差异)
 
 **GPU 相关**：
 - GPU 的 CTA/thread block 如何映射到 SM？→ [GPU 架构](gpu/architecture.md#2-cta--thread-block-层)
@@ -144,6 +157,7 @@ docs/interactive/
 
 **性能对比**：
 - 为什么 NPU 比 GPU 快？→ [性能对比](performance_comparison.md)
+- NPU 和 GPU 的根本设计思想有什么不同？→ [设计思想](ascend_npu_nvidia_gpu_design_philosophy.md)
 - 大矩阵性能如何？→ [性能对比](performance_comparison.md#16×16-矩阵乘法)
 
 **指令和测试**：

@@ -101,8 +101,8 @@ PE 流水化会增加每个 tile 的可见计算窗口，因为每一行的 psum
 | tile MAC 数 | 512 | 4096 |
 | cubeComputeCycles | 15 | 46 |
 | Cube 有效 MAC/cycle | 34.13 | 89.04 |
-| totalCycles | 182 | 349 |
-| total MAC/cycle | 2.81 | 11.74 |
+| totalCycles | 182 | 347 |
+| total MAC/cycle | 2.81 | 11.80 |
 
 这个表不能把所有变化都归因于 PE 流水化，因为 tile 同时从 8x8 扩到了 16x16。正确解读是：
 

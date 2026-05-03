@@ -31,14 +31,23 @@ class PerfCounters extends Bundle {
   // DMA profiling
   val dmaLoadCount = UInt(16.W)
   val dmaStoreCount = UInt(16.W)
+  val dmaLoadTaskCount = UInt(16.W)
+  val dmaStoreTaskCount = UInt(16.W)
   val dmaTotalCycles = UInt(32.W)
   // Ascend-style dataflow profiling: CopyIn (MTE1), external DMA (MTE2), CopyOut (MTE3)
+  val copyInTaskCount = UInt(16.W)
+  val copyOutTaskCount = UInt(16.W)
   val copyInCycles = UInt(32.W)
   val copyOutCycles = UInt(32.W)
   val copyInComputeOverlapCycles = UInt(32.W)
   val dmaComputeOverlapCycles = UInt(32.W)
   val copyOutComputeOverlapCycles = UInt(32.W)
   val dataflowOverlapCycles = UInt(32.W)
+  // Event/token wait profiling
+  val waitAllCycles = UInt(32.W)
+  val waitDmaCycles = UInt(32.W)
+  val waitCopyInCycles = UInt(32.W)
+  val waitCopyOutCycles = UInt(32.W)
   // Legacy overlap profiling (Cube compute + MTE1/MTE2 overlap)
   val overlapCycles = UInt(32.W)
 }

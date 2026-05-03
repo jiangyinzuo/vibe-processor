@@ -22,6 +22,8 @@
 - 共享 L2 Buffer 和 InstrMem，每个核有私有 UB
 - 每个逻辑 block 通过 `blockIdx * blockStride` 自动偏移 L2 地址，访问各自的数据切片
 - 每个 AiCore 内部由 Scalar dispatcher、CubeCore、VectorCore、MTE1、MTE2、MTE3 组成
+- Scalar 通过 CopyInQueue / DMAQueue / CopyOutQueue 只提交 task，不直接驱动 MTE FSM
+- `WAIT` 按 event/token 选择等待对象，形成 toy 级 token scoreboard
 - 命名上，`CubeCore` 对应真实昇腾分离模式中的 AIC，`VectorCore` 对应 AIV；本项目保留 `AiCore` 作为 toy AI Core group / wrapper。
 
 真实昇腾 NPU 中，AI CPU 是 device 侧 ARM64 处理器，具备访问 device 侧内存资源的能力，通常作为 AI Core 的补充，承担非矩阵类、分支密集或控制复杂的计算。它不应简单等同于 SPMD scheduler；kernel/task 分发更接近 runtime、task scheduler、Control CPU/固件和硬件队列的职责。本项目因此把 SPMD block dispatch 放在 `ControlCpu`，把 `AiCpu` 建模为独立辅助执行部件。
@@ -141,24 +143,24 @@ Weight-Stationary 16×16 收缩阵列，计算 C = A × W (INT8 → INT32)。
 | 0x0 | NOP | 空操作 | 阻塞 |
 | 0x1 | HALT | 停机 | 阻塞 |
 | 0x2 | LOAD | UB → MTE1 → L1 → L0A/L0B | **非阻塞启动** |
-| 0x3 | STORE | L0C → MTE3 → UB (N 行) | 阻塞 |
+| 0x3 | STORE | L0C → MTE3 → UB (N 行) | 非阻塞入队 |
 | 0x4 | MATMUL | CubeCore: C = A × W 或 C += A × W (16×16, INT8→INT32) | 阻塞等待 CubeCore |
 | 0x5 | VECADD | VectorCore: 向量加法 (8路×32bit) | 阻塞等待 VectorCore |
 | 0x6 | RELU | VectorCore: max(0, x) | 阻塞等待 VectorCore |
 | 0x8 | DMA_LOAD | MTE2: L2 → UB (N 行, 含 blockIdx 偏移) | **非阻塞** |
 | 0x9 | DMA_STORE | MTE2: UB → L2 (N 行, 含 blockIdx 偏移) | **非阻塞** |
-| 0xA | DMA_WAIT | 等待所有 DMA 完成 | 阻塞 |
+| 0xA | WAIT | 等待指定 token 完成 | 阻塞 |
 
 **关键特性：**
 - LOAD 在 MTE1 空闲时启动后继续取指，CubeCore 内部等待完整 tile ready 后再计算
 - MATMUL bit 27 为 accumulate 位：0 表示覆盖 L0C，1 表示累加到 L0C
-- DMA_LOAD/DMA_STORE 为非阻塞指令，支持 DMA-Compute Overlap
-- DMA_WAIT 显式同步所有飞行中的 DMA 请求
+- DMA_LOAD/DMA_STORE 为非阻塞入队，支持 DMA-Compute Overlap
+- WAIT_DMA / WAIT_COPY_IN / WAIT_COPY_OUT 只等待对应 token
 - 详见 [DMA Overlap 优化文档](dma_overlap.md)
 
 ---
 
-## 6. 性能计数器 (per-core × 28)
+## 6. 性能计数器 (per-core × 36)
 
 | 计数器 | 含义 |
 |--------|------|
@@ -168,10 +170,11 @@ Weight-Stationary 16×16 收缩阵列，计算 C = A × W (INT8 → INT32)。
 | cubeTotalCycles / cubeComputeCycles | MATMUL 总耗时 / SA 有效计算周期 |
 | bubbleCycles | Scalar 等待 Cube/Vector/DMA 的周期 |
 | ubReads / ubWrites | UB 访存次数 |
-| dmaLoadCount / dmaStoreCount / dmaTotalCycles | MTE2 DMA 统计 |
-| copyInCycles / copyOutCycles | MTE1 CopyIn 与 MTE3 CopyOut 周期 |
+| dmaLoadCount / dmaStoreCount / dmaLoadTaskCount / dmaStoreTaskCount / dmaTotalCycles | MTE2 DMA 统计 |
+| copyInTaskCount / copyOutTaskCount / copyInCycles / copyOutCycles | MTE1 CopyIn 与 MTE3 CopyOut 任务和周期 |
 | copyInComputeOverlapCycles / dmaComputeOverlapCycles / copyOutComputeOverlapCycles | CopyIn、MTE2、CopyOut 分别与 Cube 重叠的周期 |
 | dataflowOverlapCycles | Cube 与任一 MTE 同时活跃的周期 |
+| waitAllCycles / waitDmaCycles / waitCopyInCycles / waitCopyOutCycles | 不同 WAIT token 的停顿周期 |
 | overlapCycles | 兼容旧文档的 Cube 与 MTE1/MTE2 重叠周期 |
 
 **派生指标**：
@@ -186,13 +189,15 @@ Weight-Stationary 16×16 收缩阵列，计算 C = A × W (INT8 → INT32)。
 ### 单核 MATMUL (16×16)
 
 ```
-程序：DMA_LOAD×2 → LOAD×2 → MATMUL → STORE → DMA_STORE → HALT
+程序：DMA_LOAD×2 → WAIT_DMA → LOAD×2 → MATMUL → STORE → WAIT_COPY_OUT → DMA_STORE → WAIT_ALL → HALT
 
 性能：
-  总周期：349
+  总周期：347
   Cube 计算周期：46
   DMA 周期：144
-  重叠周期：46
+  CopyIn 周期：98
+  CopyOut 周期：16
+  数据流重叠周期：94
 ```
 
 ### 2 核数据并行
@@ -210,7 +215,7 @@ Core 1: result OK
 配置：2 个物理 AiCore，blockDim=4，blockStride=64
 程序：同一段 MATMUL kernel
 结果：4 个逻辑 block 全部完成
-实测：367 cycles，blockStarts=4，blockCompletions=4
+实测：697 cycles，blockStarts=4，blockCompletions=4
 ```
 
 ---
@@ -221,8 +226,8 @@ Core 1: result OK
 |------|---------|-------------|------|
 | **SystolicArray** | 16×16 (256 PE) | 16×16+ | 阵列规模接近，内部格式/流水/同步仍简化 |
 | **存储层次** | UB + L1 staging + L0A/L0B/L0C + L2/HBM | 完整片上层次、bank、NoC | 仍是简化模型 |
-| **MTE** | MTE1/MTE2/MTE3 三通路 | 更完整的 MTE/队列/同步机制 | 通路已拆分，调度仍简化 |
-| **Control CPU / scheduler** | 显式 `ControlCpu`，复用 `SpmdBlockScheduler` 负责 SPMD block dispatch | Runtime/TS/控制 CPU/固件/硬件队列共同参与 task 调度 | 调度简化为 1D block |
+| **MTE** | MTE1/MTE2/MTE3 三通路 + task queue + token wait | 更完整的 MTE/队列/同步机制 | 通路已拆分，调度仍简化 |
+| **Control CPU / scheduler** | 显式 `ControlCpu`，复用 `SpmdBlockScheduler` 负责 SPMD block dispatch；AiCore 内部用 task queue/token scoreboard 表达数据流 | Runtime/TS/控制 CPU/固件/硬件队列共同参与 task 调度 | 调度简化为 1D block |
 | **AI CPU** | 显式 `AiCpu` 辅助执行部件，支持 `FILL/COPY/ADD_IMM` 这类 L2 row task | Device 侧 ARM64 AI CPU，可运行更通用的控制/分支密集逻辑并访问 device 内存 | 当前不建模完整 ARM ISA/Linux 环境 |
 | **核心数** | 2 | 32 | 16× |
 | **SPMD block 调度** | 支持 1D blockDim/blockIdx，按空闲物理核领取 block | Ascend C runtime/TS 调度，支持更多资源约束 | 调度简化 |
@@ -270,9 +275,8 @@ src/main/scala/ascend/
 ├── VectorUnit.scala        # 向量计算单元
 ├── CubeCore.scala           # CubeCore：Cube + L0A/L0B/L0C
 ├── VectorCore.scala           # VectorCore：Vector 执行核心
-├── MteEngines.scala        # MTE1/MTE2/MTE3
-├── ScalarUnit.scala        # 指令取指/译码/命令调度
-├── DmaEngine.scala         # 旧 DMA 单元（保留源码，当前 AiCore 使用 MTE2）
+├── MteEngines.scala        # MTE1/MTE2/MTE3 + dataflow task bundle
+├── ScalarUnit.scala        # 指令取指/译码/task enqueue/token wait
 ├── Memory.scala            # UB + InstrMem
 ├── AiCore.scala            # AI 核心 (集成所有单元)
 ├── PerfCounters.scala      # 性能计数器
@@ -283,7 +287,8 @@ src/main/scala/ascend/
 
 ## 相关文档
 
-- [性能对比](performance_comparison.md) - NPU vs GPU 性能分析
-- [架构差异](architecture_differences.md) - 玩具 vs 真实昇腾
+- [昇腾式数据流设计思想](ascend_dataflow_design.md) - CopyIn/Compute/CopyOut 和 token wait
+- [event/token 同步教程](event_token_synchronization.md) - 细粒度同步
+- [MTE task queue 教程](mte_task_queue_data_movement.md) - 数据搬运队列化
 - [指令集](../isa.md) - 详细指令说明
 - [主文档](../README.md) - 返回文档索引

@@ -57,17 +57,7 @@ class AiCore(
   io.imemAddr := scalar.io.imemAddr
   scalar.io.imemData := io.imemData
 
-  // === Scalar -> CubeCore/VectorCore/MTE command dispatch ===
-  mte1.io.start := scalar.io.mte1Start
-  mte1.io.dstSel := scalar.io.mte1DstSel
-  mte1.io.ubBase := scalar.io.mte1UbAddr
-  scalar.io.mte1Busy := mte1.io.busy
-  scalar.io.mte1Done := mte1.io.done
-
-  mte3.io.start := scalar.io.mte3Start
-  mte3.io.ubBase := scalar.io.mte3UbAddr
-  scalar.io.mte3Done := mte3.io.done
-
+  // === Scalar -> CubeCore/VectorCore command dispatch ===
   cubeCore.io.start := scalar.io.cubeStart
   cubeCore.io.accumulate := scalar.io.cubeAccumulate
   scalar.io.cubeDone := cubeCore.io.done
@@ -82,45 +72,64 @@ class AiCore(
   cubeCore.io.l0cReadRow := mte3.io.l0cReadRow
   mte3.io.l0cReadData := cubeCore.io.l0cReadData
 
-  // === DMA queue feeding MTE2 ===
-  val dmaQueueDepth = 4
-  val dmaQueue = RegInit(VecInit.fill(dmaQueueDepth)(0.U.asTypeOf(new Bundle {
-    val isStore = Bool()
-    val l2Addr = UInt(AscendParams.L2AddrW.W)
-    val ubAddr = UInt(AscendParams.UBAddrW.W)
-  })))
-  val dmaQueueValid = RegInit(VecInit.fill(dmaQueueDepth)(false.B))
-  val dmaQueueHead = RegInit(0.U(log2Ceil(dmaQueueDepth).W))
-  val dmaQueueTail = RegInit(0.U(log2Ceil(dmaQueueDepth).W))
+  // === Dataflow task queues ===
+  val dataflowQueueDepth = 4
+  val copyInQueue = Module(new Queue(new CopyInTask, dataflowQueueDepth))
+  val dmaQueue = Module(new Queue(new DmaTask, dataflowQueueDepth))
+  val copyOutQueue = Module(new Queue(new CopyOutTask, dataflowQueueDepth))
 
-  val dmaQueueEmpty = !dmaQueueValid.asUInt.orR
-  val dmaQueueFull = dmaQueueValid.asUInt.andR
+  copyInQueue.io.enq.valid := scalar.io.copyInQueueEnq
+  copyInQueue.io.enq.bits.dstSel := scalar.io.copyInDstSel
+  copyInQueue.io.enq.bits.ubBase := scalar.io.copyInUbAddr
+  scalar.io.copyInQueueFull := !copyInQueue.io.enq.ready
 
-  scalar.io.dmaQueueEmpty := dmaQueueEmpty
-  scalar.io.dmaQueueFull := dmaQueueFull
+  dmaQueue.io.enq.valid := scalar.io.dmaQueueEnq
+  dmaQueue.io.enq.bits.isStore := scalar.io.dmaEnqIsStore
+  dmaQueue.io.enq.bits.l2Base := scalar.io.dmaEnqL2Addr
+  dmaQueue.io.enq.bits.ubBase := scalar.io.dmaEnqUbAddr
+  scalar.io.dmaQueueFull := !dmaQueue.io.enq.ready
 
-  when(scalar.io.dmaQueueEnq && !dmaQueueFull) {
-    dmaQueue(dmaQueueTail).isStore := scalar.io.dmaEnqIsStore
-    dmaQueue(dmaQueueTail).l2Addr := scalar.io.dmaEnqL2Addr
-    dmaQueue(dmaQueueTail).ubAddr := scalar.io.dmaEnqUbAddr
-    dmaQueueValid(dmaQueueTail) := true.B
-    dmaQueueTail := (dmaQueueTail + 1.U) % dmaQueueDepth.U
-  }
+  copyOutQueue.io.enq.valid := scalar.io.copyOutQueueEnq
+  copyOutQueue.io.enq.bits.ubBase := scalar.io.copyOutUbAddr
+  scalar.io.copyOutQueueFull := !copyOutQueue.io.enq.ready
+
+  // MTE1 and MTE3 share this toy core's UB port A, so their task queues arbitrate before launch.
+  val ubPortADataMoverIdle = !mte1.io.busy && !mte1.io.done && !mte3.io.busy && !mte3.io.done &&
+    !vectorCore.io.busy && !vectorCore.io.done
+  val launchCopyIn = copyInQueue.io.deq.valid && ubPortADataMoverIdle
+  val launchCopyOut = copyOutQueue.io.deq.valid && ubPortADataMoverIdle && !copyInQueue.io.deq.valid
+
+  copyInQueue.io.deq.ready := launchCopyIn
+  copyOutQueue.io.deq.ready := launchCopyOut
+
+  mte1.io.start := launchCopyIn
+  mte1.io.dstSel := copyInQueue.io.deq.bits.dstSel
+  mte1.io.ubBase := copyInQueue.io.deq.bits.ubBase
+
+  mte3.io.start := launchCopyOut
+  mte3.io.ubBase := copyOutQueue.io.deq.bits.ubBase
 
   val l2OffsetFull = io.blockIdx * blockStride.U(AscendParams.L2AddrW.W)
   val l2Offset = l2OffsetFull(AscendParams.L2AddrW - 1, 0)
-  val dmaReq = dmaQueue(dmaQueueHead)
-  val mte2Start = dmaQueueValid(dmaQueueHead) && !mte2.io.busy && !mte2.io.done
+  val dmaReq = dmaQueue.io.deq.bits
+  val copyInPending = copyInQueue.io.deq.valid || mte1.io.busy || mte1.io.done
+  val copyOutPending = copyOutQueue.io.deq.valid || mte3.io.busy || mte3.io.done
+  val dmaStoreWaitingForCopyOut = dmaQueue.io.deq.valid && dmaReq.isStore && copyOutPending
+  val launchDma =
+    dmaQueue.io.deq.valid && !mte2.io.busy && !mte2.io.done && !dmaStoreWaitingForCopyOut
 
-  mte2.io.start := mte2Start
+  dmaQueue.io.deq.ready := launchDma
+  mte2.io.start := launchDma
   mte2.io.isStore := dmaReq.isStore
-  mte2.io.l2Base := dmaReq.l2Addr + l2Offset
-  mte2.io.ubBase := dmaReq.ubAddr
+  mte2.io.l2Base := dmaReq.l2Base + l2Offset
+  mte2.io.ubBase := dmaReq.ubBase
 
-  when(mte2.io.done) {
-    dmaQueueValid(dmaQueueHead) := false.B
-    dmaQueueHead := (dmaQueueHead + 1.U) % dmaQueueDepth.U
-  }
+  val dmaPending = dmaQueue.io.deq.valid || mte2.io.busy || mte2.io.done
+
+  scalar.io.waitCopyInPending := copyInPending
+  scalar.io.waitDmaPending := dmaPending
+  scalar.io.waitCopyOutPending := copyOutPending
+  scalar.io.waitAllPending := copyInPending || dmaPending || copyOutPending
 
   // === UB port A arbitration: MTE1/MTE3/VectorCore share the local-memory port ===
   val portAUseMte1 = mte1.io.ubEn
@@ -180,7 +189,7 @@ class AiCore(
     perf.blockCompletions := perf.blockCompletions + 1.U
   }
 
-  val wasInDecode = RegNext(scalar.io.dbgState === 2.U, false.B)
+  val wasInDecode = RegNext(scalar.io.dbgState === ScalarDbgState.Decode, false.B)
   when(wasInDecode) {
     switch(scalar.io.dbgOpLat) {
       is(Opcode.NOP) { perf.instrNop := perf.instrNop + 1.U }
@@ -202,9 +211,14 @@ class AiCore(
   when(cubeCore.io.dbgFeeding) { perf.cubeComputeCycles := perf.cubeComputeCycles + 1.U }
 
   val scalarWaiting = running && (
-    (scalar.io.dbgState === 8.U && !scalar.io.cubeStart) ||
-      (scalar.io.dbgState === 9.U && !scalar.io.vectorStart) ||
-      (scalar.io.dbgState === 10.U && dmaQueueEmpty)
+    (scalar.io.dbgState === ScalarDbgState.Matmul && !cubeCore.io.dbgFeeding && !cubeCore.io.done) ||
+      (scalar.io.dbgState === ScalarDbgState.Vector && !scalar.io.vectorStart) ||
+      (scalar.io.dbgState === ScalarDbgState.Wait && (
+        (scalar.io.dbgWaitKind === WaitKind.ALL && scalar.io.waitAllPending) ||
+          (scalar.io.dbgWaitKind === WaitKind.DMA && scalar.io.waitDmaPending) ||
+          (scalar.io.dbgWaitKind === WaitKind.COPY_IN && scalar.io.waitCopyInPending) ||
+          (scalar.io.dbgWaitKind === WaitKind.COPY_OUT && scalar.io.waitCopyOutPending)
+      ))
   )
   when(scalarWaiting) { perf.bubbleCycles := perf.bubbleCycles + 1.U }
 
@@ -230,6 +244,11 @@ class AiCore(
   val dmaActive = mte2.io.busy
   val copyOutActive = mte3.io.busy
 
+  when(launchCopyIn) { perf.copyInTaskCount := perf.copyInTaskCount + 1.U }
+  when(launchDma && !dmaReq.isStore) { perf.dmaLoadTaskCount := perf.dmaLoadTaskCount + 1.U }
+  when(launchDma && dmaReq.isStore) { perf.dmaStoreTaskCount := perf.dmaStoreTaskCount + 1.U }
+  when(launchCopyOut) { perf.copyOutTaskCount := perf.copyOutTaskCount + 1.U }
+
   when(copyInActive) { perf.copyInCycles := perf.copyInCycles + 1.U }
   when(dmaActive) { perf.dmaTotalCycles := perf.dmaTotalCycles + 1.U }
   when(copyOutActive) { perf.copyOutCycles := perf.copyOutCycles + 1.U }
@@ -249,5 +268,19 @@ class AiCore(
 
   when(cubeActive && (copyInActive || dmaActive)) {
     perf.overlapCycles := perf.overlapCycles + 1.U
+  }
+
+  val waitActive = scalar.io.dbgState === ScalarDbgState.Wait
+  when(waitActive && scalar.io.dbgWaitKind === WaitKind.ALL && scalar.io.waitAllPending) {
+    perf.waitAllCycles := perf.waitAllCycles + 1.U
+  }
+  when(waitActive && scalar.io.dbgWaitKind === WaitKind.DMA && scalar.io.waitDmaPending) {
+    perf.waitDmaCycles := perf.waitDmaCycles + 1.U
+  }
+  when(waitActive && scalar.io.dbgWaitKind === WaitKind.COPY_IN && scalar.io.waitCopyInPending) {
+    perf.waitCopyInCycles := perf.waitCopyInCycles + 1.U
+  }
+  when(waitActive && scalar.io.dbgWaitKind === WaitKind.COPY_OUT && scalar.io.waitCopyOutPending) {
+    perf.waitCopyOutCycles := perf.waitCopyOutCycles + 1.U
   }
 }
