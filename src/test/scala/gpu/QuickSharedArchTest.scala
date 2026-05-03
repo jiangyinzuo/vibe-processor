@@ -7,12 +7,12 @@ import org.scalatest.funspec.AnyFunSpec
 /** 快速验证共享架构的基本功能 */
 class QuickSharedArchTest extends AnyFunSpec with ChiselSim {
 
-  val W  = GpuParams.WarpWidth
+  val W = GpuParams.WarpWidth
   val DW = GpuParams.DataWidth
 
   def enc(op: Int, rd: Int = 0, rs1: Int = 0, rs2: Int = 0, rs3: Int = 0, imm: Int = 0): Long =
-    ((op & 0xF).toLong << 28) | ((rd & 0xF).toLong << 24) | ((rs1 & 0xF).toLong << 20) |
-    ((rs2 & 0xF).toLong << 16) | ((rs3 & 0xF).toLong << 12) | (imm & 0xFFF).toLong
+    ((op & 0xf).toLong << 28) | ((rd & 0xf).toLong << 24) | ((rs1 & 0xf).toLong << 20) |
+      ((rs2 & 0xf).toLong << 16) | ((rs3 & 0xf).toLong << 12) | (imm & 0xfff).toLong
 
   describe("Quick Shared Architecture Test") {
 
@@ -41,11 +41,11 @@ class QuickSharedArchTest extends AnyFunSpec with ChiselSim {
 
         // 加载程序
         val program = Seq(
-          enc(0x2, rd = 0, rs1 = 15, imm = 0),  // LD R0, [R15+0]
-          enc(0x2, rd = 1, rs1 = 15, imm = 1),  // LD R1, [R15+1]
-          enc(0x4, rd = 2, rs1 = 0, rs2 = 1),   // ADD R2, R0, R1
+          enc(0x2, rd = 0, rs1 = 15, imm = 0), // LD R0, [R15+0]
+          enc(0x2, rd = 1, rs1 = 15, imm = 1), // LD R1, [R15+1]
+          enc(0x4, rd = 2, rs1 = 0, rs2 = 1), // ADD R2, R0, R1
           enc(0x3, rs1 = 15, rs2 = 2, imm = 2), // ST [R15+2], R2
-          enc(0x1)                                // HALT
+          enc(0x1) // HALT
         )
 
         for ((instr, i) <- program.zipWithIndex) {
@@ -85,8 +85,10 @@ class QuickSharedArchTest extends AnyFunSpec with ChiselSim {
 
         // 验证
         for (i <- 0 until W) {
-          assert(result(i) == (10 * (i + 1) + (i + 1)),
-            s"Lane $i: got ${result(i)}, expected ${10 * (i + 1) + (i + 1)}")
+          assert(
+            result(i) == (10 * (i + 1) + (i + 1)),
+            s"Lane $i: got ${result(i)}, expected ${10 * (i + 1) + (i + 1)}"
+          )
         }
       }
     }

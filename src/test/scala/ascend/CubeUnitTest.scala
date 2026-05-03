@@ -13,8 +13,8 @@ class CubeUnitTest extends AnyFunSpec with ChiselSim {
 
   def runCubeMatmul(
       dut: CubeUnit,
-      a:   Array[Array[Int]],
-      w:   Array[Array[Int]]
+      a: Array[Array[Int]],
+      w: Array[Array[Int]]
   ): Array[Array[Int]] = {
     for (k <- 0 until N; j <- 0 until N) {
       dut.io.weightData(k)(j).poke(w(k)(j).S(8.W))
@@ -42,11 +42,13 @@ class CubeUnitTest extends AnyFunSpec with ChiselSim {
         val a = Array.tabulate(N, N)((i, j) => i * N + j + 1)
         val w = Array.tabulate(N, N)((i, j) => if (i == j) 1 else 0)
         val expected = matmul(a, w)
-        val result   = runCubeMatmul(dut, a, w)
+        val result = runCubeMatmul(dut, a, w)
 
         for (i <- 0 until N; j <- 0 until N)
-          assert(result(i)(j) == expected(i)(j),
-            s"C[$i][$j]: got ${result(i)(j)}, expected ${expected(i)(j)}")
+          assert(
+            result(i)(j) == expected(i)(j),
+            s"C[$i][$j]: got ${result(i)(j)}, expected ${expected(i)(j)}"
+          )
       }
     }
 
@@ -55,11 +57,13 @@ class CubeUnitTest extends AnyFunSpec with ChiselSim {
         val a = Array.tabulate(N, N)((i, j) => (i + j + 1) % 8)
         val w = Array.tabulate(N, N)((i, j) => (i * 2 + j) % 8)
         val expected = matmul(a, w)
-        val result   = runCubeMatmul(dut, a, w)
+        val result = runCubeMatmul(dut, a, w)
 
         for (i <- 0 until N; j <- 0 until N)
-          assert(result(i)(j) == expected(i)(j),
-            s"C[$i][$j]: got ${result(i)(j)}, expected ${expected(i)(j)}")
+          assert(
+            result(i)(j) == expected(i)(j),
+            s"C[$i][$j]: got ${result(i)(j)}, expected ${expected(i)(j)}"
+          )
       }
     }
   }

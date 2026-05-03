@@ -5,10 +5,10 @@ import chisel3.util._
 
 /** CTA / thread-block scheduler.
   *
-  * Real NVIDIA GPUs assign CTAs to SMs subject to resident block, warp,
-  * register, and shared-memory limits. This toy scheduler models the resident
-  * CTA layer explicitly: each SM exposes a small number of CTA slots, and the
-  * scheduler greedily fills free slots with CTA IDs from the current grid.
+  * Real NVIDIA GPUs assign CTAs to SMs subject to resident block, warp, register, and shared-memory
+  * limits. This toy scheduler models the resident CTA layer explicitly: each SM exposes a small
+  * number of CTA slots, and the scheduler greedily fills free slots with CTA IDs from the current
+  * grid.
   */
 class CTAScheduler(
     numSMs: Int = GpuParams.NumSMs,

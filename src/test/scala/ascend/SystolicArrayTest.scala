@@ -18,8 +18,8 @@ class SystolicArrayTest extends AnyFunSpec with ChiselSim {
   /** Run C = A * W through the systolic array DUT. */
   def runMatmul(
       dut: SystolicArray,
-      a:   Array[Array[Int]],
-      w:   Array[Array[Int]]
+      a: Array[Array[Int]],
+      w: Array[Array[Int]]
   ): Array[Array[Int]] = {
     // Load weights
     for (k <- 0 until N; j <- 0 until N) {
@@ -56,7 +56,10 @@ class SystolicArrayTest extends AnyFunSpec with ChiselSim {
       dut.clock.step()
       cycles += 1
     }
-    assert(dut.io.done.peek().litToBoolean, s"Systolic array did not signal done after $cycles drain cycles")
+    assert(
+      dut.io.done.peek().litToBoolean,
+      s"Systolic array did not signal done after $cycles drain cycles"
+    )
 
     // Read results
     Array.tabulate(N, N) { (i, j) =>
@@ -71,7 +74,7 @@ class SystolicArrayTest extends AnyFunSpec with ChiselSim {
         val a = Array.tabulate(N, N)((i, j) => i * N + j + 1)
         val w = Array.tabulate(N, N)((i, j) => if (i == j) 1 else 0)
         val expected = matmul(a, w)
-        val result   = runMatmul(dut, a, w)
+        val result = runMatmul(dut, a, w)
 
         for (i <- 0 until N; j <- 0 until N) {
           assert(
@@ -87,7 +90,7 @@ class SystolicArrayTest extends AnyFunSpec with ChiselSim {
         val a = Array.tabulate(N, N)((i, j) => if (i == j) 1 else 0)
         val w = Array.tabulate(N, N)((i, j) => i * N + j + 2)
         val expected = matmul(a, w)
-        val result   = runMatmul(dut, a, w)
+        val result = runMatmul(dut, a, w)
 
         for (i <- 0 until N; j <- 0 until N) {
           assert(
@@ -103,7 +106,7 @@ class SystolicArrayTest extends AnyFunSpec with ChiselSim {
         val a = Array.tabulate(N, N)((i, j) => (i + j + 1) % 8)
         val w = Array.tabulate(N, N)((i, j) => (i * 2 + j) % 8)
         val expected = matmul(a, w)
-        val result   = runMatmul(dut, a, w)
+        val result = runMatmul(dut, a, w)
 
         for (i <- 0 until N; j <- 0 until N) {
           assert(

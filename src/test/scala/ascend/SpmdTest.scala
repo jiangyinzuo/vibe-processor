@@ -6,21 +6,21 @@ import org.scalatest.funspec.AnyFunSpec
 
 class SpmdTest extends AnyFunSpec with ChiselSim {
 
-  val N  = AscendParams.ArraySize
+  val N = AscendParams.ArraySize
   val AW = AscendParams.AccWidth
   val BlockStride = 64
 
   def encDmaLoad(ubBase: Int, l2Base: Int): Long =
-    (0x8L << 28) | ((ubBase & 0xFF).toLong << 20) | ((l2Base & 0xFFFF).toLong << 4)
+    (0x8L << 28) | ((ubBase & 0xff).toLong << 20) | ((l2Base & 0xffff).toLong << 4)
   def encDmaStore(ubBase: Int, l2Base: Int): Long =
-    (0x9L << 28) | ((ubBase & 0xFF).toLong << 20) | ((l2Base & 0xFFFF).toLong << 4)
-  def encDmaWait: Long = 0xAL << 28
+    (0x9L << 28) | ((ubBase & 0xff).toLong << 20) | ((l2Base & 0xffff).toLong << 4)
+  def encDmaWait: Long = 0xaL << 28
   def encLoad(bufSel: Int, memAddr: Int): Long =
-    (0x2L << 28) | ((bufSel & 0x3).toLong << 26) | ((memAddr & 0xFFFF).toLong << 4)
+    (0x2L << 28) | ((bufSel & 0x3).toLong << 26) | ((memAddr & 0xffff).toLong << 4)
   def encStore(bufSel: Int, memAddr: Int): Long =
-    (0x3L << 28) | ((bufSel & 0x3).toLong << 26) | ((memAddr & 0xFFFF).toLong << 4)
+    (0x3L << 28) | ((bufSel & 0x3).toLong << 26) | ((memAddr & 0xffff).toLong << 4)
   def encMatmul: Long = 0x4L << 28
-  def encHalt: Long   = 0x1L << 28
+  def encHalt: Long = 0x1L << 28
 
   def loadProgram(dut: ToyAscendTop, instrs: Seq[Long]): Unit = {
     for ((instr, i) <- instrs.zipWithIndex) {
@@ -117,22 +117,23 @@ class SpmdTest extends AnyFunSpec with ChiselSim {
 
         for (b <- tiles.indices) {
           val (a, w) = tiles(b)
-          val expected = Array.tabulate(N, N)((i, j) =>
-            (0 until N).map(k => a(i)(k) * w(k)(j)).sum
-          )
+          val expected = Array.tabulate(N, N)((i, j) => (0 until N).map(k => a(i)(k) * w(k)(j)).sum)
           val base = b * BlockStride + 2 * N
 
           for (i <- 0 until N) {
             val row = readL2(dut, base + i)
             for (j <- 0 until N) {
-              assert(row(j) == expected(i)(j),
-                s"Block $b, C[$i][$j]: got ${row(j)}, expected ${expected(i)(j)}")
+              assert(
+                row(j) == expected(i)(j),
+                s"Block $b, C[$i][$j]: got ${row(j)}, expected ${expected(i)(j)}"
+              )
             }
           }
         }
 
         val starts = (0 until 2).map(c => dut.io.perf(c).blockStarts.peek().litValue.toInt).sum
-        val completions = (0 until 2).map(c => dut.io.perf(c).blockCompletions.peek().litValue.toInt).sum
+        val completions =
+          (0 until 2).map(c => dut.io.perf(c).blockCompletions.peek().litValue.toInt).sum
         assert(starts == 4, s"expected 4 SPMD block starts, got $starts")
         assert(completions == 4, s"expected 4 SPMD block completions, got $completions")
       }

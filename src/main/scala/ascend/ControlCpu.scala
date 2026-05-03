@@ -5,9 +5,8 @@ import chisel3.util._
 
 /** Toy device control CPU.
   *
-  * This models the runtime/task-scheduler side of the device rather than the
-  * AI CPU execution engine. It owns SPMD logical-block dispatch and launches
-  * physical AiCores as slots become idle.
+  * This models the runtime/task-scheduler side of the device rather than the AI CPU execution
+  * engine. It owns SPMD logical-block dispatch and launches physical AiCores as slots become idle.
   */
 class ControlCpu(
     numCores: Int = AscendParams.NumCores,

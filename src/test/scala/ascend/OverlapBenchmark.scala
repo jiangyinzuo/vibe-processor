@@ -4,26 +4,24 @@ import chisel3._
 import chisel3.simulator.scalatest.ChiselSim
 import org.scalatest.funspec.AnyFunSpec
 
-/**
- * 对比测试：顺序执行 vs 流水线 Overlap
- * 展示 DMA-Compute Overlap 的实际性能提升
- */
+/** 对比测试：顺序执行 vs 流水线 Overlap 展示 DMA-Compute Overlap 的实际性能提升
+  */
 class OverlapBenchmark extends AnyFunSpec with ChiselSim {
 
   val N = AscendParams.ArraySize
 
   def encLoad(bufSel: Int, memAddr: Int): Long =
-    (0x2L << 28) | ((bufSel & 0x3).toLong << 26) | ((memAddr & 0xFFFF).toLong << 4)
+    (0x2L << 28) | ((bufSel & 0x3).toLong << 26) | ((memAddr & 0xffff).toLong << 4)
   def encStore(bufSel: Int, memAddr: Int): Long =
-    (0x3L << 28) | ((bufSel & 0x3).toLong << 26) | ((memAddr & 0xFFFF).toLong << 4)
+    (0x3L << 28) | ((bufSel & 0x3).toLong << 26) | ((memAddr & 0xffff).toLong << 4)
   def encDmaLoad(ubBase: Int, l2Base: Int): Long =
-    (0x8L << 28) | ((ubBase & 0xFF).toLong << 20) | ((l2Base & 0xFFFF).toLong << 4)
+    (0x8L << 28) | ((ubBase & 0xff).toLong << 20) | ((l2Base & 0xffff).toLong << 4)
   def encDmaStore(ubBase: Int, l2Base: Int): Long =
-    (0x9L << 28) | ((ubBase & 0xFF).toLong << 20) | ((l2Base & 0xFFFF).toLong << 4)
-  def encDmaWait: Long = 0xAL << 28
+    (0x9L << 28) | ((ubBase & 0xff).toLong << 20) | ((l2Base & 0xffff).toLong << 4)
+  def encDmaWait: Long = 0xaL << 28
   def encMatmul: Long = 0x4L << 28
-  def encNop: Long    = 0x0L
-  def encHalt: Long   = 0x1L << 28
+  def encNop: Long = 0x0L
+  def encHalt: Long = 0x1L << 28
 
   def loadProgram(dut: ToyAscendTop, instrs: Seq[Long]): Unit = {
     for ((instr, i) <- instrs.zipWithIndex) {
@@ -122,14 +120,14 @@ class OverlapBenchmark extends AnyFunSpec with ChiselSim {
 
         for (t <- 0 until numTiles) {
           val (a, w) = tiles(t)
-          val expected = Array.tabulate(N, N)((i, j) =>
-            (0 until N).map(k => a(i)(k) * w(k)(j)).sum
-          )
+          val expected = Array.tabulate(N, N)((i, j) => (0 until N).map(k => a(i)(k) * w(k)(j)).sum)
           val result = Array.tabulate(N)(i => readL2(dut, (numTiles * 2 + t) * N + i))
 
           for (i <- 0 until N; j <- 0 until N) {
-            assert(result(i)(j) == expected(i)(j),
-              s"Sequential Tile $t mismatch at [$i][$j]: got ${result(i)(j)}, expected ${expected(i)(j)}")
+            assert(
+              result(i)(j) == expected(i)(j),
+              s"Sequential Tile $t mismatch at [$i][$j]: got ${result(i)(j)}, expected ${expected(i)(j)}"
+            )
           }
         }
 
@@ -138,9 +136,9 @@ class OverlapBenchmark extends AnyFunSpec with ChiselSim {
         val dmaTotalCycles = perf.dmaTotalCycles.litValue.toInt
         val overlapCycles = perf.overlapCycles.litValue.toInt
 
-        println("\n" + "="*70)
+        println("\n" + "=" * 70)
         println("基准测试：顺序执行（无 Overlap）")
-        println("="*70)
+        println("=" * 70)
         println(f"Tile 数量:              $numTiles")
         println(f"总周期数:               $cyclesSequential%5d")
         println(f"Cube 计算周期:          $cubeComputeCycles%5d")
@@ -148,9 +146,12 @@ class OverlapBenchmark extends AnyFunSpec with ChiselSim {
         println(f"重叠周期:               $overlapCycles%5d")
         println(f"计算效率:               ${cubeComputeCycles * 100.0 / cyclesSequential}%.1f%%")
         println(f"DMA 占比:               ${dmaTotalCycles * 100.0 / cyclesSequential}%.1f%%")
-        println(f"重叠率:                 ${if (dmaTotalCycles > 0) overlapCycles * 100.0 / dmaTotalCycles else 0.0}%.1f%%")
+        println(
+          f"重叠率:                 ${if (dmaTotalCycles > 0) overlapCycles * 100.0 / dmaTotalCycles
+            else 0.0}%.1f%%"
+        )
         println(f"每个 Tile 平均周期:     ${cyclesSequential.toDouble / numTiles}%.1f")
-        println("="*70)
+        println("=" * 70)
       }
     }
 
@@ -208,14 +209,14 @@ class OverlapBenchmark extends AnyFunSpec with ChiselSim {
 
         for (t <- 0 until numTiles) {
           val (a, w) = tiles(t)
-          val expected = Array.tabulate(N, N)((i, j) =>
-            (0 until N).map(k => a(i)(k) * w(k)(j)).sum
-          )
+          val expected = Array.tabulate(N, N)((i, j) => (0 until N).map(k => a(i)(k) * w(k)(j)).sum)
           val result = Array.tabulate(N)(i => readL2(dut, (numTiles * 2 + t) * N + i))
 
           for (i <- 0 until N; j <- 0 until N) {
-            assert(result(i)(j) == expected(i)(j),
-              s"Pipelined Tile $t mismatch at [$i][$j]: got ${result(i)(j)}, expected ${expected(i)(j)}")
+            assert(
+              result(i)(j) == expected(i)(j),
+              s"Pipelined Tile $t mismatch at [$i][$j]: got ${result(i)(j)}, expected ${expected(i)(j)}"
+            )
           }
         }
 
@@ -224,9 +225,9 @@ class OverlapBenchmark extends AnyFunSpec with ChiselSim {
         val dmaTotalCycles = perf.dmaTotalCycles.litValue.toInt
         val overlapCycles = perf.overlapCycles.litValue.toInt
 
-        println("\n" + "="*70)
+        println("\n" + "=" * 70)
         println("优化测试：流水线 Overlap")
-        println("="*70)
+        println("=" * 70)
         println(f"Tile 数量:              $numTiles")
         println(f"总周期数:               $cyclesPipelined%5d")
         println(f"Cube 计算周期:          $cubeComputeCycles%5d")
@@ -234,9 +235,12 @@ class OverlapBenchmark extends AnyFunSpec with ChiselSim {
         println(f"重叠周期:               $overlapCycles%5d")
         println(f"计算效率:               ${cubeComputeCycles * 100.0 / cyclesPipelined}%.1f%%")
         println(f"DMA 占比:               ${dmaTotalCycles * 100.0 / cyclesPipelined}%.1f%%")
-        println(f"重叠率:                 ${if (dmaTotalCycles > 0) overlapCycles * 100.0 / dmaTotalCycles else 0.0}%.1f%%")
+        println(
+          f"重叠率:                 ${if (dmaTotalCycles > 0) overlapCycles * 100.0 / dmaTotalCycles
+            else 0.0}%.1f%%"
+        )
         println(f"每个 Tile 平均周期:     ${cyclesPipelined.toDouble / numTiles}%.1f")
-        println("="*70)
+        println("=" * 70)
       }
     }
   }

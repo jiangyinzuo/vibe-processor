@@ -35,8 +35,8 @@ class MatmulDebug extends AnyFunSpec with ChiselSim {
           encDmaLoad(ubBase = 0, l2Base = 0),
           encDmaLoad(ubBase = 8, l2Base = 8),
           encDmaWait,
-          encLoad(bufSel = 1, memAddr = 0),     // bufSel=1 是 activation
-          encLoad(bufSel = 0, memAddr = 8),     // bufSel=0 是 weight
+          encLoad(bufSel = 1, memAddr = 0), // bufSel=1 是 activation
+          encLoad(bufSel = 0, memAddr = 8), // bufSel=0 是 weight
           encMatmul,
           encStore(bufSel = 2, memAddr = 16),
           encDmaStore(ubBase = 16, l2Base = 16),
@@ -70,16 +70,16 @@ class MatmulDebug extends AnyFunSpec with ChiselSim {
 
   // 辅助函数
   def encLoad(bufSel: Int, memAddr: Int): Long =
-    (0x2L << 28) | ((bufSel & 0x3).toLong << 26) | ((memAddr & 0xFFFF).toLong << 4)
+    (0x2L << 28) | ((bufSel & 0x3).toLong << 26) | ((memAddr & 0xffff).toLong << 4)
   def encStore(bufSel: Int, memAddr: Int): Long =
-    (0x3L << 28) | ((bufSel & 0x3).toLong << 26) | ((memAddr & 0xFFFF).toLong << 4)
+    (0x3L << 28) | ((bufSel & 0x3).toLong << 26) | ((memAddr & 0xffff).toLong << 4)
   def encDmaLoad(ubBase: Int, l2Base: Int): Long =
-    (0x8L << 28) | ((ubBase & 0xFF).toLong << 20) | ((l2Base & 0xFFFF).toLong << 4)
+    (0x8L << 28) | ((ubBase & 0xff).toLong << 20) | ((l2Base & 0xffff).toLong << 4)
   def encDmaStore(ubBase: Int, l2Base: Int): Long =
-    (0x9L << 28) | ((ubBase & 0xFF).toLong << 20) | ((l2Base & 0xFFFF).toLong << 4)
-  def encDmaWait: Long = 0xAL << 28
+    (0x9L << 28) | ((ubBase & 0xff).toLong << 20) | ((l2Base & 0xffff).toLong << 4)
+  def encDmaWait: Long = 0xaL << 28
   def encMatmul: Long = 0x4L << 28
-  def encHalt: Long   = 0x1L << 28
+  def encHalt: Long = 0x1L << 28
 
   def loadNpuProgram(dut: ToyAscendTop, instrs: Seq[Long]): Unit = {
     for ((instr, i) <- instrs.zipWithIndex) {

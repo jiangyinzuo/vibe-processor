@@ -6,12 +6,12 @@ import org.scalatest.funspec.AnyFunSpec
 
 class GpuIntegrationTest extends AnyFunSpec with ChiselSim {
 
-  val W  = GpuParams.WarpWidth
+  val W = GpuParams.WarpWidth
   val DW = GpuParams.DataWidth
 
   def enc(op: Int, rd: Int = 0, rs1: Int = 0, rs2: Int = 0, rs3: Int = 0, imm: Int = 0): Long =
-    ((op & 0xF).toLong << 28) | ((rd & 0xF).toLong << 24) | ((rs1 & 0xF).toLong << 20) |
-    ((rs2 & 0xF).toLong << 16) | ((rs3 & 0xF).toLong << 12) | (imm & 0xFFF).toLong
+    ((op & 0xf).toLong << 28) | ((rd & 0xf).toLong << 24) | ((rs1 & 0xf).toLong << 20) |
+      ((rs2 & 0xf).toLong << 16) | ((rs3 & 0xf).toLong << 12) | (imm & 0xfff).toLong
 
   def loadProgram(dut: ToyGpuTop, instrs: Seq[Long]): Unit = {
     for ((instr, i) <- instrs.zipWithIndex) {
@@ -53,6 +53,22 @@ class GpuIntegrationTest extends AnyFunSpec with ChiselSim {
     dut.io.gmemExt.we.poke(false.B)
   }
 
+  def printSmPerf(dut: ToyGpuTop, smId: Int): Unit = {
+    val perf = dut.io.perf(smId)
+    val total = perf.totalCycles.peek().litValue.toLong
+    val live = perf.activeWarpCycles.peek().litValue.toLong
+    val eligible = perf.eligibleWarpCycles.peek().litValue.toLong
+    val stalled = perf.stalledWarpCycles.peek().litValue.toLong
+    val noEligible = perf.noEligibleCycles.peek().litValue.toLong
+    val aluIssue = perf.aluIssueCycles.peek().litValue.toLong
+    val memIssue = perf.memIssueCycles.peek().litValue.toLong
+    val dualIssue = perf.dualIssueCycles.peek().litValue.toLong
+    println(
+      s"  SM $smId: total=$total, liveWarp=$live, eligible=$eligible, stalled=$stalled, " +
+        s"noEligible=$noEligible, aluIssue=$aluIssue, memIssue=$memIssue, dualIssue=$dualIssue"
+    )
+  }
+
   def runToHalt(dut: ToyGpuTop, maxCycles: Int = 600): Int = {
     dut.io.start.poke(true.B)
     dut.clock.step()
@@ -69,11 +85,11 @@ class GpuIntegrationTest extends AnyFunSpec with ChiselSim {
 
   // Simple ADD program: R2 = R0 + R1, then store
   val addProgram = Seq(
-    enc(0x2, rd = 0, rs1 = 15, imm = 0),  // LD R0, [R15+0]
-    enc(0x2, rd = 1, rs1 = 15, imm = 1),  // LD R1, [R15+1]
-    enc(0x4, rd = 2, rs1 = 0, rs2 = 1),   // ADD R2, R0, R1
+    enc(0x2, rd = 0, rs1 = 15, imm = 0), // LD R0, [R15+0]
+    enc(0x2, rd = 1, rs1 = 15, imm = 1), // LD R1, [R15+1]
+    enc(0x4, rd = 2, rs1 = 0, rs2 = 1), // ADD R2, R0, R1
     enc(0x3, rs1 = 15, rs2 = 2, imm = 2), // ST [R15+2], R2
-    enc(0x1)                                // HALT
+    enc(0x1) // HALT
   )
 
   describe("ToyGpuTop Multi-SM") {
@@ -102,11 +118,8 @@ class GpuIntegrationTest extends AnyFunSpec with ChiselSim {
         println(s"4-SM VADD (latency=1): $cycles cycles, result=${result.mkString(",")}")
         assert(result.toSeq == Seq(11, 22, 33, 44))
 
-        // Print per-SM perf
         for (s <- 0 until GpuParams.NumSMs) {
-          val total = dut.io.perf(s).totalCycles.peek().litValue.toLong
-          val active = dut.io.perf(s).activeWarpCycles.peek().litValue.toLong
-          println(s"  SM $s: total=$total, active=$active")
+          printSmPerf(dut, s)
         }
       }
     }
@@ -125,8 +138,7 @@ class GpuIntegrationTest extends AnyFunSpec with ChiselSim {
         assert(result.toSeq == Seq(11, 22, 33, 44))
 
         for (s <- 0 until GpuParams.NumSMs) {
-          val total = dut.io.perf(s).totalCycles.peek().litValue.toLong
-          println(s"  SM $s: total=$total")
+          printSmPerf(dut, s)
         }
       }
     }
@@ -136,14 +148,22 @@ class GpuIntegrationTest extends AnyFunSpec with ChiselSim {
         initDut(dut)
         writeGmem(dut, 0, Array.fill(W)(GpuParams.ThreadsPerCTA))
 
-        loadProgram(dut, Seq(
-          enc(0x2, rd = 0, rs1 = GpuSpecialReg.Zero, imm = 0),              // R0 = blockDim.x
-          enc(0x5, rd = 1, rs1 = GpuSpecialReg.BlockIdxX, rs2 = 0),         // R1 = blockIdx.x * blockDim.x
-          enc(0x4, rd = 2, rs1 = 1, rs2 = GpuSpecialReg.ThreadIdxX),        // R2 = global thread id
-          enc(0x3, rs1 = 2, rs2 = GpuSpecialReg.ThreadIdxX, imm = 16),      // store threadIdx.x
-          enc(0x3, rs1 = 2, rs2 = GpuSpecialReg.BlockIdxX, imm = 64),       // store blockIdx.x
-          enc(0x1)
-        ))
+        loadProgram(
+          dut,
+          Seq(
+            enc(0x2, rd = 0, rs1 = GpuSpecialReg.Zero, imm = 0), // R0 = blockDim.x
+            enc(
+              0x5,
+              rd = 1,
+              rs1 = GpuSpecialReg.BlockIdxX,
+              rs2 = 0
+            ), // R1 = blockIdx.x * blockDim.x
+            enc(0x4, rd = 2, rs1 = 1, rs2 = GpuSpecialReg.ThreadIdxX), // R2 = global thread id
+            enc(0x3, rs1 = 2, rs2 = GpuSpecialReg.ThreadIdxX, imm = 16), // store threadIdx.x
+            enc(0x3, rs1 = 2, rs2 = GpuSpecialReg.BlockIdxX, imm = 64), // store blockIdx.x
+            enc(0x1)
+          )
+        )
 
         val cycles = runToHalt(dut, maxCycles = 400)
         println(s"1-SM 4-CTA ID test: $cycles cycles")

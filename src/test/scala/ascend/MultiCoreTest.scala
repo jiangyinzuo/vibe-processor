@@ -6,22 +6,22 @@ import org.scalatest.funspec.AnyFunSpec
 
 class MultiCoreTest extends AnyFunSpec with ChiselSim {
 
-  val N  = AscendParams.ArraySize
+  val N = AscendParams.ArraySize
   val AW = AscendParams.AccWidth
   val NC = AscendParams.NumCores
   val SLICE = AscendParams.L2SliceSize
 
   def encDmaLoad(ubBase: Int, l2Base: Int): Long =
-    (0x8L << 28) | ((ubBase & 0xFF).toLong << 20) | ((l2Base & 0xFFFF).toLong << 4)
+    (0x8L << 28) | ((ubBase & 0xff).toLong << 20) | ((l2Base & 0xffff).toLong << 4)
   def encDmaStore(ubBase: Int, l2Base: Int): Long =
-    (0x9L << 28) | ((ubBase & 0xFF).toLong << 20) | ((l2Base & 0xFFFF).toLong << 4)
-  def encDmaWait: Long = 0xAL << 28
+    (0x9L << 28) | ((ubBase & 0xff).toLong << 20) | ((l2Base & 0xffff).toLong << 4)
+  def encDmaWait: Long = 0xaL << 28
   def encLoad(bufSel: Int, memAddr: Int): Long =
-    (0x2L << 28) | ((bufSel & 0x3).toLong << 26) | ((memAddr & 0xFFFF).toLong << 4)
+    (0x2L << 28) | ((bufSel & 0x3).toLong << 26) | ((memAddr & 0xffff).toLong << 4)
   def encStore(bufSel: Int, memAddr: Int): Long =
-    (0x3L << 28) | ((bufSel & 0x3).toLong << 26) | ((memAddr & 0xFFFF).toLong << 4)
+    (0x3L << 28) | ((bufSel & 0x3).toLong << 26) | ((memAddr & 0xffff).toLong << 4)
   def encMatmul: Long = 0x4L << 28
-  def encHalt: Long   = 0x1L << 28
+  def encHalt: Long = 0x1L << 28
 
   def loadProgram(dut: ToyAscendTop, instrs: Seq[Long]): Unit = {
     for ((instr, i) <- instrs.zipWithIndex) {
@@ -89,11 +89,15 @@ class MultiCoreTest extends AnyFunSpec with ChiselSim {
         // Test data: 2 different matrix pairs
         val tiles = Array(
           // Tile 0 (core 0): A0, W0
-          (Array.tabulate(N, N)((i, j) => (i + j + 1) % 8),
-           Array.tabulate(N, N)((i, j) => (i * 2 + j) % 8)),
+          (
+            Array.tabulate(N, N)((i, j) => (i + j + 1) % 8),
+            Array.tabulate(N, N)((i, j) => (i * 2 + j) % 8)
+          ),
           // Tile 1 (core 1): A1, W1
-          (Array.tabulate(N, N)((i, j) => (i + j + 2) % 8),
-           Array.tabulate(N, N)((i, j) => (i * 2 + j + 1) % 8))
+          (
+            Array.tabulate(N, N)((i, j) => (i + j + 2) % 8),
+            Array.tabulate(N, N)((i, j) => (i * 2 + j + 1) % 8)
+          )
         )
 
         // Preload L2: Core 0 data at L2[0..2N-1], Core 1 data at L2[SLICE..SLICE+2N-1]
@@ -109,11 +113,11 @@ class MultiCoreTest extends AnyFunSpec with ChiselSim {
           encDmaLoad(ubBase = 0, l2Base = 0),
           encDmaLoad(ubBase = N, l2Base = N),
           encDmaWait,
-          encLoad(1, 0),  // L0_B from UB[0]
-          encLoad(0, N),  // L0_A from UB[N]
+          encLoad(1, 0), // L0_B from UB[0]
+          encLoad(0, N), // L0_A from UB[N]
           encMatmul,
-          encStore(2, 2*N), // result to UB[2*N]
-          encDmaStore(ubBase = 2*N, l2Base = 2*N),
+          encStore(2, 2 * N), // result to UB[2*N]
+          encDmaStore(ubBase = 2 * N, l2Base = 2 * N),
           encDmaWait,
           encHalt
         )
@@ -125,16 +129,16 @@ class MultiCoreTest extends AnyFunSpec with ChiselSim {
         // Verify results from L2
         for (c <- 0 until NC) {
           val (a, w) = tiles(c)
-          val expected = Array.tabulate(N, N)((i, j) =>
-            (0 until N).map(k => a(i)(k) * w(k)(j)).sum
-          )
-          val base = c * SLICE + 2*N
+          val expected = Array.tabulate(N, N)((i, j) => (0 until N).map(k => a(i)(k) * w(k)(j)).sum)
+          val base = c * SLICE + 2 * N
 
           for (i <- 0 until N) {
             val row = readL2(dut, base + i)
             for (j <- 0 until N) {
-              assert(row(j) == expected(i)(j),
-                s"Core $c, C[$i][$j]: got ${row(j)}, expected ${expected(i)(j)}")
+              assert(
+                row(j) == expected(i)(j),
+                s"Core $c, C[$i][$j]: got ${row(j)}, expected ${expected(i)(j)}"
+              )
             }
           }
           println(s"  Core $c result verified OK")
@@ -143,7 +147,7 @@ class MultiCoreTest extends AnyFunSpec with ChiselSim {
         // Print per-core perf
         for (c <- 0 until NC) {
           val total = dut.io.perf(c).totalCycles.peek().litValue.toLong
-          val dmaT  = dut.io.perf(c).dmaTotalCycles.peek().litValue.toLong
+          val dmaT = dut.io.perf(c).dmaTotalCycles.peek().litValue.toLong
           val cubeT = dut.io.perf(c).cubeTotalCycles.peek().litValue.toLong
           println(s"  Core $c: total=$total, dma=$dmaT, cube=$cubeT")
         }

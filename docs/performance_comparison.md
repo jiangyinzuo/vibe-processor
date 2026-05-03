@@ -102,19 +102,27 @@ SystolicArray 吞吐量：16 次乘加/周期
 
 | 指标 | 数值 | 说明 |
 |------|------|------|
-| **总周期数** | 20 | 单 SM 总耗时 |
-| **活跃 Warp 周期** | 20 | 所有 Warp 累计执行周期 |
-| **GlobalMem 读次数** | 8 | 每 Warp 读 2 次 × 4 Warps |
-| **GlobalMem 写次数** | 4 | 每 Warp 写 1 次 × 4 Warps |
-| **Warp 利用率** | 25.0% | activeWarpCycles / (total × 4) |
+| **总周期数** | 39 | 单 SM 总耗时 |
+| **Live Warp 周期** | 119 | Ready + Stalled warp-cycle |
+| **Eligible Warp 周期** | 103 | 可被调度器选择的 Ready warp-cycle |
+| **Stalled Warp 周期** | 16 | 等待 GlobalMem 的 warp-cycle |
+| **No-eligible 周期** | 0 | 没有 Ready warp 的周期 |
+| **GlobalMem 请求数** | 12 | 每 SM：4 Warps × (2 LD + 1 ST) |
+| **Warp 占用率** | 76.3% | liveWarpCycles / (total × 4) |
 
 ### 向量加法性能数据（4 SM，latency=10）
 
 | 指标 | 数值 | 说明 |
 |------|------|------|
-| **总周期数** | 34 | 内存延迟增加导致周期增加 |
-| **活跃 Warp 周期** | 20 | 计算周期不变 |
-| **Warp 利用率** | 14.7% | 延迟增加降低利用率 |
+| **总周期数** | 50 | 内存延迟增加，但被部分隐藏 |
+| **Live Warp 周期** | 190 | Ready + Stalled warp-cycle |
+| **Eligible Warp 周期** | 102 | 仍有大量周期可调度其它 warp |
+| **Stalled Warp 周期** | 88 | 等待 GlobalMem 的 warp-cycle 明显增加 |
+| **No-eligible 周期** | 14 | 延迟真正暴露到前端的周期 |
+| **GlobalMem 请求数** | 12 | 请求数量不变，差异来自 latency |
+| **Warp 占用率** | 95.0% | liveWarpCycles / (total × 4) |
+
+解释：`latency=10` 下有 88 个 stalled warp-cycle，但只有 14 个 no-eligible cycles。也就是说，大部分等待发生时，SM 里仍有其它 Ready warp 可供调度；这就是通过 warp 调度隐藏访存延迟。
 
 ### 16×16 矩阵乘法性能估算
 

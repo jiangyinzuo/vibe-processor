@@ -29,58 +29,61 @@
 
 ---
 
-## 性能提升（实测数据）
+## 性能计数（当前实测数据）
 
 ### 1. 纯计算程序（无内存访问）
 
 **测试程序**：10 条 ADD 指令
 
-| 指标 | 单调度器 | 双调度器 | 提升 |
-|------|---------|---------|------|
-| **总周期数** | 44 | 22 | **2.00×** |
-| **Warp 利用率** | 25% | 25% | 持平 |
-| **平均并行度** | 1.0 Warp/cycle | 1.0 Warp/cycle | - |
+| 指标 | 数值 |
+|------|------|
+| **总周期数** | 85 |
+| **Live Warp 周期** | 252 |
+| **Eligible Warp 周期** | 252 |
+| **Stalled Warp 周期** | 0 |
+| **No-eligible 周期** | 0 |
+| **ALU issue 周期** | 20 |
 
 **分析**：
-- ✅ **理想加速比 2×**：纯计算程序无资源冲突，双调度器完美并行
-- 每周期执行 1 个 Warp，但总周期减半
-- 4 个 Warp × 11 条指令 = 44 条指令
-  - 单调度器：44 周期（串行）
-  - 双调度器：22 周期（并行）
+- 纯计算没有访存等待，因此 `stalledWarpCycles=0` 且 `noEligibleCycles=0`
+- 周期数主要来自当前 dispatcher/RF/WB 流水线和 CTA 调度开销
+- `ALU issue=20` 说明 4 个 warp 的 ADD work 已实际进入 ALU lane
 
 ### 2. 内存密集程序（latency=10）
 
 **测试程序**：LD → LD → ADD → ST
 
-| 指标 | 单调度器（估算） | 双调度器 | 提升 |
-|------|----------------|---------|------|
-| **总周期数** | 84 | 28 | **3.00×** |
-| **Warp 利用率** | ~5% | 8.9% | 1.8× |
-| **延迟隐藏效果** | 1× | 3× | **3×** |
+| 指标 | 数值 |
+|------|------|
+| **总周期数** | 50 |
+| **Live Warp 周期** | 190 |
+| **Eligible Warp 周期** | 102 |
+| **Stalled Warp 周期** | 88 |
+| **No-eligible 周期** | 14 |
+| **MEM issue 周期** | 12 |
 
 **分析**：
-- ✅ **超线性加速**：通过 Warp 切换隐藏内存延迟
-- 每个 Warp 理论需要 21 周期（2×LD + ADD + ST）
-- 单调度器：4 × 21 = 84 周期
-- 双调度器：28 周期（延迟隐藏）
-- **性能提升 3×**，超过理论 2×
+- 4 个 warp 共发出 8 次 LD 和 4 次 ST，因此 `MEM issue=12`
+- `stalledWarpCycles=88` 表示访存压力存在
+- `noEligibleCycles=14` 表示只有 14 个周期所有 live warp 都在等；其它周期仍有 Ready warp 可调度
 
 ### 3. 混合程序（计算 + 内存，latency=5）
 
 **测试程序**：LD → ADD×5 → ST
 
-| 指标 | 单调度器（估算） | 双调度器 | 提升 |
-|------|----------------|---------|------|
-| **总周期数** | 60 | 20 | **3.00×** |
-| **Warp 利用率** | ~10% | 20.0% | 2× |
-| **平均并行度** | 0.4 | 0.8 | 2× |
+| 指标 | 数值 |
+|------|------|
+| **总周期数** | 62 |
+| **Live Warp 周期** | 238 |
+| **Eligible Warp 周期** | 214 |
+| **Stalled Warp 周期** | 24 |
+| **No-eligible 周期** | 2 |
+| **ALU issue 周期** | 11 |
+| **MEM issue 周期** | 8 |
 
 **分析**：
-- ✅ **综合效果**：并行执行 + 延迟隐藏
-- 每个 Warp 理论需要 15 周期
-- 单调度器：4 × 15 = 60 周期
-- 双调度器：20 周期
-- **性能提升 3×**
+- 该程序计算更多，`eligibleWarpCycles=214`，绝大多数周期至少有 Ready warp
+- `noEligibleCycles=2` 表示 latency=5 基本被其它 warp 和计算覆盖
 
 ---
 
@@ -145,54 +148,38 @@ for (s <- 0 until numSchedulers) {
 
 ## 性能分析
 
-### 为什么能超线性加速（3× > 2×）？
+### 如何从计数器判断延迟隐藏？
 
-**延迟隐藏效果**：
+内存密集程序（`latency=10`）的核心数据：
 
 ```
-单调度器（4 个 Warp，latency=10）：
-  周期 1: Warp 0 LD (启动)
-  周期 2: Warp 1 LD (启动)
-  周期 3: Warp 2 LD (启动)
-  周期 4: Warp 3 LD (启动)
-  周期 5-10: 所有 Warp 等待
-  周期 11: Warp 0 完成
-  ...
-  总周期：~84
-
-双调度器（4 个 Warp，latency=10）：
-  周期 1: Warp 0, 2 LD (2 个并行启动)
-  周期 2: Warp 1, 3 LD (2 个并行启动)
-  周期 3-10: 等待
-  周期 11: Warp 0, 2 完成
-  周期 12: Warp 1, 3 完成
-  ...
-  总周期：~28
-
-加速比：84 / 28 = 3×
+totalCycles         = 50
+eligibleWarpCycles  = 102
+stalledWarpCycles   = 88
+noEligibleCycles    = 14
+memIssueCycles      = 12
 ```
 
-**关键**：
-- 双调度器可以更快地启动所有 Warp 的内存访问
-- 减少了总等待时间
-- 实现了更好的延迟隐藏
+解释：
+
+- `stalledWarpCycles=88`：很多 warp-cycle 花在等待 GlobalMem。
+- `eligibleWarpCycles=102`：等待发生的同时，SM 里仍有不少 Ready warp。
+- `noEligibleCycles=14`：只有 14 个周期所有 live warp 都在等内存，这些周期才是无法隐藏的访存气泡。
+- `memIssueCycles=12`：4 个 warp 的 `2×LD + 1×ST` 全部进入 memory path。
+
+因此，当前实现展示的是“部分隐藏”：访存压力存在，但并没有把每个 warp 的等待完全串行暴露到总周期中。
 
 ### Warp 利用率分析
 
-**为什么利用率不高（8.9% - 25%）？**
+需要区分三个指标：
 
 ```
-Warp 利用率 = 活跃 Warp 周期 / (总周期 × Warp 数量)
-
-内存密集程序：
-  - 总周期：28
-  - 活跃 Warp 周期：10
-  - Warp 利用率：10 / (28 × 4) = 8.9%
-
-原因：
-  - 大部分时间在等待内存（latency=10）
-  - 只有少量时间在执行计算
+Warp 占用率 = liveWarpCycles / (totalCycles × residentWarps)
+Ready 覆盖率 = eligibleWarpCycles / (totalCycles × residentWarps)
+No-eligible 周期 = 有 live warp 但没有 Ready warp 的周期
 ```
+
+`liveWarpCycles` 说明 occupancy，`eligibleWarpCycles` 说明调度器是否还有可发射的 warp，`stalledWarpCycles` 说明访存压力，`noEligibleCycles` 说明访存压力真正暴露成前端空泡。
 
 **如何提高利用率？**
 1. ✅ 增加 Warp 数量（如 8 个或 16 个）
@@ -270,9 +257,9 @@ sbt "testOnly gpu.GpuIntegrationTest"
 
 ### 测试结果
 - ✅ 所有测试通过
-- ✅ 纯计算程序：2× 加速
-- ✅ 内存密集程序：3× 加速
-- ✅ 混合程序：3× 加速
+- ✅ 纯计算程序：`stalledWarpCycles=0`，验证计数器不会误报访存等待
+- ✅ 内存密集程序：`stalledWarpCycles=88`、`noEligibleCycles=14`，验证延迟被部分隐藏
+- ✅ 混合程序：`noEligibleCycles=2`，多数访存等待被计算和其它 warp 覆盖
 - ✅ 向后兼容：原有测试全部通过
 
 ---
@@ -282,8 +269,8 @@ sbt "testOnly gpu.GpuIntegrationTest"
 ### 成功实现
 ✅ **2 个 Warp Scheduler** 并行执行
 ✅ **资源仲裁机制**（GlobalMem + SharedMem）
-✅ **性能提升 2-3×**（实测数据）
-✅ **延迟隐藏效果显著**（3× 提升）
+✅ **延迟隐藏计数器**（eligible/stalled/no-eligible）
+✅ **Issue 计数器**（ALU/SFU/MEM/ALU+SFU）
 
 ### 核心价值
 - 展示了真实 GPU 的多调度器架构
@@ -298,8 +285,8 @@ sbt "testOnly gpu.GpuIntegrationTest"
 
 ### 教学意义
 - ✅ 保留了核心概念（多调度器、仲裁、延迟隐藏）
-- ✅ 代码复杂度适中（~150 行改动）
-- ✅ 性能提升可量化（2-3×）
+- ✅ 可以通过计数器区分 occupancy、访存等待和真正暴露的空泡
+- ✅ 性能现象可量化，不依赖肉眼看波形
 - ✅ 为理解真实 GPU 打下基础
 
 ---

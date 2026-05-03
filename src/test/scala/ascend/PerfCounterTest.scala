@@ -6,21 +6,21 @@ import org.scalatest.funspec.AnyFunSpec
 
 class PerfCounterTest extends AnyFunSpec with ChiselSim {
 
-  val N  = AscendParams.ArraySize
+  val N = AscendParams.ArraySize
   val AW = AscendParams.AccWidth
 
   def encDmaLoad(ubBase: Int, l2Base: Int): Long =
-    (0x8L << 28) | ((ubBase & 0xFF).toLong << 20) | ((l2Base & 0xFFFF).toLong << 4)
+    (0x8L << 28) | ((ubBase & 0xff).toLong << 20) | ((l2Base & 0xffff).toLong << 4)
   def encDmaStore(ubBase: Int, l2Base: Int): Long =
-    (0x9L << 28) | ((ubBase & 0xFF).toLong << 20) | ((l2Base & 0xFFFF).toLong << 4)
-  def encDmaWait: Long = 0xAL << 28
+    (0x9L << 28) | ((ubBase & 0xff).toLong << 20) | ((l2Base & 0xffff).toLong << 4)
+  def encDmaWait: Long = 0xaL << 28
   def encLoad(bufSel: Int, memAddr: Int): Long =
-    (0x2L << 28) | ((bufSel & 0x3).toLong << 26) | ((memAddr & 0xFFFF).toLong << 4)
+    (0x2L << 28) | ((bufSel & 0x3).toLong << 26) | ((memAddr & 0xffff).toLong << 4)
   def encStore(bufSel: Int, memAddr: Int): Long =
-    (0x3L << 28) | ((bufSel & 0x3).toLong << 26) | ((memAddr & 0xFFFF).toLong << 4)
+    (0x3L << 28) | ((bufSel & 0x3).toLong << 26) | ((memAddr & 0xffff).toLong << 4)
   def encMatmul: Long = 0x4L << 28
-  def encNop: Long    = 0x0L
-  def encHalt: Long   = 0x1L << 28
+  def encNop: Long = 0x0L
+  def encHalt: Long = 0x1L << 28
 
   def loadProgram(dut: ToyAscendTop, instrs: Seq[Long]): Unit = {
     for ((instr, i) <- instrs.zipWithIndex) {
@@ -72,20 +72,20 @@ class PerfCounterTest extends AnyFunSpec with ChiselSim {
   def peekPerf(dut: ToyAscendTop, core: Int = 0): Map[String, Long] = {
     val p = dut.io.perf(core)
     Map(
-      "totalCycles"       -> p.totalCycles.peek().litValue.toLong,
-      "instrNop"          -> p.instrNop.peek().litValue.toLong,
-      "instrHalt"         -> p.instrHalt.peek().litValue.toLong,
-      "instrLoad"         -> p.instrLoad.peek().litValue.toLong,
-      "instrStore"        -> p.instrStore.peek().litValue.toLong,
-      "instrMatmul"       -> p.instrMatmul.peek().litValue.toLong,
-      "cubeTotalCycles"   -> p.cubeTotalCycles.peek().litValue.toLong,
+      "totalCycles" -> p.totalCycles.peek().litValue.toLong,
+      "instrNop" -> p.instrNop.peek().litValue.toLong,
+      "instrHalt" -> p.instrHalt.peek().litValue.toLong,
+      "instrLoad" -> p.instrLoad.peek().litValue.toLong,
+      "instrStore" -> p.instrStore.peek().litValue.toLong,
+      "instrMatmul" -> p.instrMatmul.peek().litValue.toLong,
+      "cubeTotalCycles" -> p.cubeTotalCycles.peek().litValue.toLong,
       "cubeComputeCycles" -> p.cubeComputeCycles.peek().litValue.toLong,
-      "bubbleCycles"      -> p.bubbleCycles.peek().litValue.toLong,
-      "ubReads"           -> p.ubReads.peek().litValue.toLong,
-      "ubWrites"          -> p.ubWrites.peek().litValue.toLong,
-      "dmaLoadCount"      -> p.dmaLoadCount.peek().litValue.toLong,
-      "dmaStoreCount"     -> p.dmaStoreCount.peek().litValue.toLong,
-      "dmaTotalCycles"    -> p.dmaTotalCycles.peek().litValue.toLong
+      "bubbleCycles" -> p.bubbleCycles.peek().litValue.toLong,
+      "ubReads" -> p.ubReads.peek().litValue.toLong,
+      "ubWrites" -> p.ubWrites.peek().litValue.toLong,
+      "dmaLoadCount" -> p.dmaLoadCount.peek().litValue.toLong,
+      "dmaStoreCount" -> p.dmaStoreCount.peek().litValue.toLong,
+      "dmaTotalCycles" -> p.dmaTotalCycles.peek().litValue.toLong
     )
   }
 
@@ -116,11 +116,14 @@ class PerfCounterTest extends AnyFunSpec with ChiselSim {
         for (i <- 0 until N) writeL2(dut, N + i, w(i))
 
         val program = Seq(
-          encDmaLoad(0, 0), encDmaLoad(N, N),
+          encDmaLoad(0, 0),
+          encDmaLoad(N, N),
           encDmaWait,
-          encLoad(1, 0), encLoad(0, N),
-          encMatmul, encStore(2, 2*N),
-          encDmaStore(2*N, 2*N),
+          encLoad(1, 0),
+          encLoad(0, N),
+          encMatmul,
+          encStore(2, 2 * N),
+          encDmaStore(2 * N, 2 * N),
           encDmaWait,
           encHalt
         )
@@ -128,7 +131,9 @@ class PerfCounterTest extends AnyFunSpec with ChiselSim {
         runToHalt(dut)
 
         val p = peekPerf(dut, 0)
-        println(s"Perf: total=${p("totalCycles")} dma=${p("dmaTotalCycles")} cube=${p("cubeTotalCycles")}")
+        println(
+          s"Perf: total=${p("totalCycles")} dma=${p("dmaTotalCycles")} cube=${p("cubeTotalCycles")}"
+        )
         assert(p("instrLoad") == 2)
         assert(p("instrMatmul") == 1)
         assert(p("instrStore") == 1)

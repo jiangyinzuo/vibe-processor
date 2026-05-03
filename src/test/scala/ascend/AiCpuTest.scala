@@ -66,11 +66,13 @@ class AiCpuTest extends AnyFunSpec with ChiselSim {
   describe("AiCpu") {
     it("runs simple device-side L2 row tasks") {
       simulate(new AiCpu(n = 2, aw = 32, addrW = 8)) { dut =>
-        val mem = scala.collection.mutable.Map[Int, Array[Int]](
-          0 -> Array(1, 2),
-          1 -> Array(3, 4),
-          2 -> Array(5, 6)
-        ).withDefaultValue(Array(0, 0))
+        val mem = scala.collection.mutable
+          .Map[Int, Array[Int]](
+            0 -> Array(1, 2),
+            1 -> Array(3, 4),
+            2 -> Array(5, 6)
+          )
+          .withDefaultValue(Array(0, 0))
 
         def driveReadData(): Unit = {
           val addr = dut.io.l2Addr.peek().litValue.toInt
@@ -95,7 +97,10 @@ class AiCpuTest extends AnyFunSpec with ChiselSim {
             dut.clock.step()
             cycles += 1
           }
-          assert(dut.io.done.peek().litToBoolean, s"AI CPU task did not finish within $maxCycles cycles")
+          assert(
+            dut.io.done.peek().litToBoolean,
+            s"AI CPU task did not finish within $maxCycles cycles"
+          )
           dut.clock.step()
         }
 

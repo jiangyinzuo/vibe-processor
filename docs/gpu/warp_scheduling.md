@@ -14,19 +14,24 @@
 
 **本项目实现**：
 ```scala
-// 每个 Warp 包含 4 个线程（lane）
-val WarpWidth = 4
-
-// Warp 结构
-class Warp extends Module {
-  val io = IO(new Bundle {
-    val pc = Output(UInt(8.W))           // 共享的程序计数器
-    val halted = Output(Bool())          // Warp 是否已停止
-    val regFile = Vec(16, Vec(4, SInt(32.W)))  // 寄存器文件：16 个寄存器 × 4 个线程
-    val cudaCores = Vec(4, new CudaCore) // 4 个 CUDA Core（每线程一个）
-  })
+// WarpContext 只保存调度和执行控制状态
+class WarpContext(warpWidth: Int = 8, dw: Int = 32) extends Bundle {
+  val pc             = UInt(8.W)
+  val state          = WarpState()
+  val activeMask     = UInt(8.W)
+  val ctaId          = UInt(GpuParams.CTAIdWidth.W)
+  val memWaitCounter = UInt(8.W)
+  val started        = Bool()
 }
 ```
+
+通用寄存器值不在 `WarpContext` 中，而是存放在 SM 级 `SharedRegisterFile` 中：
+
+```text
+regs[warpId][laneId][regId]
+```
+
+因此，切换 warp 不会覆盖寄存器。`warp 0` 的 `R1` 和 `warp 1` 的 `R1` 是不同物理槽位；scheduler 切换 warp 时只是让 dispatcher 换一个 `warpId` 访问寄存器文件。
 
 **真实 GPU**：
 - NVIDIA GPU：Warp = 32 个线程
@@ -470,53 +475,63 @@ for (int i = threadIdx.x; i < N; i += blockDim.x) {
 
 ---
 
-## 7. 性能分析
+## 7. 性能分析：用计数器观察延迟隐藏
 
-### 7.1 Warp 利用率
+GPU 隐藏访存延迟的核心不是让单次 `LD` 更快，而是让 `LD` 后等待数据的 warp 让出 issue 机会。只要 SM 中还有其它 `Ready` warp，调度器就继续发射其它 warp 的指令；只有所有 live warp 都在等待时，执行资源才真正因为访存而空转。
 
-**定义**：活跃 Warp 周期 / (总周期 × Warp 数量)
+### 7.1 计数器定义
 
-**本项目测试结果**（latency=1）：
+当前 GPU RTL 在 `GpuPerfCounters` 中暴露了以下教学用计数器：
+
+| 计数器 | 含义 | 如何解读 |
+|---|---|---|
+| `totalCycles` | SM 至少有一个 active CTA 的周期数 | 程序总运行周期 |
+| `activeWarpCycles` | `Ready + Stalled` live warp 的累计 warp-cycle | 平均 live warp 数 = `activeWarpCycles / totalCycles` |
+| `eligibleWarpCycles` | 处于 `Ready` 状态的累计 warp-cycle | 调度器可选择的候选 warp 越多，越容易隐藏延迟 |
+| `stalledWarpCycles` | 处于 `Stalled` 状态的累计 warp-cycle | 等待 global memory 的压力 |
+| `noEligibleCycles` | live warp 存在但没有任何 `Ready` warp 的周期数 | 访存延迟没有被隐藏，SM 前端无 warp 可发射 |
+| `aluIssueCycles` | 至少一个 ALU lane 发射的周期数 | 实际计算 issue |
+| `sfuIssueCycles` | 至少一个 SFU lane 发射的周期数 | 特殊函数 issue |
+| `memIssueCycles` | 发出 global memory 请求的周期数 | LD/ST 请求进入 memory path |
+| `dualIssueCycles` | ALU 和 SFU 同周期发射的周期数 | 不同 warp 的 ALU/SFU 多发射效果 |
+
+`stalledWarpCycles` 高不一定代表性能差；如果 `eligibleWarpCycles` 也高、`noEligibleCycles` 低，说明等待内存的 warp 大多被其它 ready warp 覆盖了。`noEligibleCycles` 才是“访存延迟暴露到 SM 前端”的直接信号。
+
+### 7.2 验证命令
+
+```bash
+sbt "testOnly gpu.InstructionDispatcherMultiIssueTest gpu.DualSchedulerTest gpu.GpuIntegrationTest"
 ```
-总周期：20
-活跃 Warp 周期：20
-Warp 利用率：20 / (20 × 4) = 25%
-```
 
-**分析**：
-- 每个周期只有 1 个 Warp 在执行
-- 其他 3 个 Warp 处于 Idle 状态
-- 原因：程序太短，没有足够的并行度
+2026-05-03 的验证结果：9 个 GPU 相关测试全部通过。
 
-**本项目测试结果**（latency=10）：
-```
-总周期：34
-活跃 Warp 周期：20
-Warp 利用率：20 / (34 × 4) = 14.7%
-```
+### 7.3 实测结果
 
-**分析**：
-- 内存延迟增加，但活跃周期不变
-- Warp 利用率下降
-- 4 个 Warp 不足以隐藏 10 周期的延迟
+`gpu.DualSchedulerTest` 的单 SM 结果：
 
-### 7.2 延迟隐藏效果
+| 场景 | total | live warp-cycle | eligible | stalled | no-eligible | ALU issue | MEM issue |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| 纯计算，10 条 ADD | 85 | 252 | 252 | 0 | 0 | 20 | 0 |
+| 内存密集，`LD -> LD -> ADD -> ST`, `latency=10` | 50 | 190 | 102 | 88 | 14 | 3 | 12 |
+| 混合，`LD -> ADD×5 -> ST`, `latency=5` | 62 | 238 | 214 | 24 | 2 | 11 | 8 |
 
-**理想情况**：
-- 如果有足够多的 Warp，可以完全隐藏内存延迟
-- 需要的 Warp 数量 ≥ 内存延迟 / 指令执行时间
+`gpu.GpuIntegrationTest` 的 4-SM VADD 结果（每个 SM 相同）：
 
-**本项目**：
-- 内存延迟：10 周期
-- 指令执行时间：1 周期
-- 需要的 Warp 数量：10 个
-- 实际 Warp 数量：4 个
-- **不足以完全隐藏延迟**
+| 场景 | total | live warp-cycle | eligible | stalled | no-eligible | ALU issue | MEM issue |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| VADD, `gmemLatency=1` | 39 | 119 | 103 | 16 | 0 | 3 | 12 |
+| VADD, `gmemLatency=10` | 50 | 190 | 102 | 88 | 14 | 3 | 12 |
 
-**真实 GPU**：
-- 内存延迟：200-400 周期
-- 每个 SM 有 32-64 个 Warp
-- 可以更好地隐藏延迟
+关键结论：
+
+- `latency=10` 的 VADD 从 39 cycles 增加到 50 cycles，而不是按每次访存额外 9 cycles 线性放大，说明一部分访存等待被 warp 切换覆盖。
+- 内存密集用例中 `stalledWarpCycles=88`，说明确实有大量 warp 在等内存；但 `noEligibleCycles=14`，说明只有 14 个周期 SM 完全没有 ready warp，其它周期仍能找到 warp 继续前进。
+- 纯计算用例 `stalledWarpCycles=0`、`noEligibleCycles=0`，验证这些计数器没有把普通流水线开销误算成访存等待。
+- 当前 `dualIssueCycles=0` 出现在这些 VADD/ADD/MEM 用例中是正常的；ALU/SFU 同周期发射由 `InstructionDispatcherMultiIssueTest` 单独验证。
+
+### 7.4 和真实 GPU 的关系
+
+真实 GPU 的同一思想更强：每个 SM 有更多 resident warp、更复杂的 scoreboard、更多 warp scheduler 和更多执行单元。访存延迟可能达到数百周期，但只要 occupancy 和 eligible warp 足够，scheduler 可以持续把其它 warp 的独立指令送进 ALU/SFU/LDST/Tensor 等单元。本项目用 4 个 warp 和可配置 `gmemLatency` 保留了这个核心机制，便于在波形和计数器中直接观察。
 
 ---
 

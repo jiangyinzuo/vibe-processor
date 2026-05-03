@@ -5,50 +5,52 @@ import chisel3.util._
 
 /** AI Core: scalar dispatcher + decoupled CubeCore/VectorCore compute paths + MTEs.
   *
-  * @param coreId Physical core index, kept for debug/diagram compatibility.
-  * @param blockStride L2 row stride between SPMD logical blocks.
+  * @param coreId
+  *   Physical core index, kept for debug/diagram compatibility.
+  * @param blockStride
+  *   L2 row stride between SPMD logical blocks.
   */
 class AiCore(
-    n:      Int = AscendParams.ArraySize,
-    dw:     Int = AscendParams.DataWidth,
-    aw:     Int = AscendParams.AccWidth,
+    n: Int = AscendParams.ArraySize,
+    dw: Int = AscendParams.DataWidth,
+    aw: Int = AscendParams.AccWidth,
     coreId: Int = 0,
     blockStride: Int = AscendParams.L2SliceSize
 ) extends Module {
   val io = IO(new Bundle {
-    val start    = Input(Bool())
+    val start = Input(Bool())
     val blockIdx = Input(UInt(AscendParams.BlockDimWidth.W))
-    val halted   = Output(Bool())
+    val halted = Output(Bool())
     val imemAddr = Output(UInt(8.W))
     val imemData = Input(UInt(AscendParams.InstrWidth.W))
 
-    val ubEn     = Output(Bool())
-    val ubWe     = Output(Bool())
-    val ubAddr   = Output(UInt(AscendParams.UBAddrW.W))
-    val ubWdata  = Output(Vec(n, SInt(aw.W)))
-    val ubRdata  = Input(Vec(n, SInt(aw.W)))
+    val ubEn = Output(Bool())
+    val ubWe = Output(Bool())
+    val ubAddr = Output(UInt(AscendParams.UBAddrW.W))
+    val ubWdata = Output(Vec(n, SInt(aw.W)))
+    val ubRdata = Input(Vec(n, SInt(aw.W)))
 
-    val ubEnB    = Output(Bool())
-    val ubWeB    = Output(Bool())
-    val ubAddrB  = Output(UInt(AscendParams.UBAddrW.W))
+    val ubEnB = Output(Bool())
+    val ubWeB = Output(Bool())
+    val ubAddrB = Output(UInt(AscendParams.UBAddrW.W))
     val ubWdataB = Output(Vec(n, SInt(aw.W)))
     val ubRdataB = Input(Vec(n, SInt(aw.W)))
 
-    val l2En     = Output(Bool())
-    val l2We     = Output(Bool())
-    val l2Addr   = Output(UInt(AscendParams.L2AddrW.W))
-    val l2Wdata  = Output(Vec(n, SInt(aw.W)))
-    val l2Rdata  = Input(Vec(n, SInt(aw.W)))
+    val l2En = Output(Bool())
+    val l2We = Output(Bool())
+    val l2Addr = Output(UInt(AscendParams.L2AddrW.W))
+    val l2Wdata = Output(Vec(n, SInt(aw.W)))
+    val l2Rdata = Input(Vec(n, SInt(aw.W)))
 
-    val perf     = Output(new PerfCounters)
+    val perf = Output(new PerfCounters)
   })
 
-  val scalar     = Module(new ScalarUnit(n, dw, aw))
-  val cubeCore   = Module(new CubeCore(n, dw, aw))
+  val scalar = Module(new ScalarUnit(n, dw, aw))
+  val cubeCore = Module(new CubeCore(n, dw, aw))
   val vectorCore = Module(new VectorCore(n, aw))
-  val mte1       = Module(new Mte1(n, dw, aw))
-  val mte2       = Module(new Mte2(n, aw))
-  val mte3       = Module(new Mte3(n, aw))
+  val mte1 = Module(new Mte1(n, dw, aw))
+  val mte2 = Module(new Mte2(n, aw))
+  val mte3 = Module(new Mte3(n, aw))
 
   scalar.io.start := io.start
   io.halted := scalar.io.halted
@@ -83,15 +85,15 @@ class AiCore(
   val dmaQueueDepth = 4
   val dmaQueue = RegInit(VecInit.fill(dmaQueueDepth)(0.U.asTypeOf(new Bundle {
     val isStore = Bool()
-    val l2Addr  = UInt(AscendParams.L2AddrW.W)
-    val ubAddr  = UInt(AscendParams.UBAddrW.W)
+    val l2Addr = UInt(AscendParams.L2AddrW.W)
+    val ubAddr = UInt(AscendParams.UBAddrW.W)
   })))
   val dmaQueueValid = RegInit(VecInit.fill(dmaQueueDepth)(false.B))
-  val dmaQueueHead  = RegInit(0.U(log2Ceil(dmaQueueDepth).W))
-  val dmaQueueTail  = RegInit(0.U(log2Ceil(dmaQueueDepth).W))
+  val dmaQueueHead = RegInit(0.U(log2Ceil(dmaQueueDepth).W))
+  val dmaQueueTail = RegInit(0.U(log2Ceil(dmaQueueDepth).W))
 
   val dmaQueueEmpty = !dmaQueueValid.asUInt.orR
-  val dmaQueueFull  = dmaQueueValid.asUInt.andR
+  val dmaQueueFull = dmaQueueValid.asUInt.andR
 
   scalar.io.dmaQueueEmpty := dmaQueueEmpty
   scalar.io.dmaQueueFull := dmaQueueFull
@@ -126,11 +128,16 @@ class AiCore(
 
   io.ubEn := portAUseMte1 || portAUseMte3 || portAUseVector
   io.ubWe := Mux(portAUseMte3, mte3.io.ubWe, Mux(portAUseVector, vectorCore.io.ubWe, false.B))
-  io.ubAddr := Mux(portAUseMte1, mte1.io.ubAddr,
-    Mux(portAUseMte3, mte3.io.ubAddr,
-      Mux(portAUseVector, vectorCore.io.ubAddr, 0.U)))
-  io.ubWdata := Mux(portAUseMte3, mte3.io.ubWdata,
-    Mux(portAUseVector, vectorCore.io.ubWdata, VecInit.fill(n)(0.S(aw.W))))
+  io.ubAddr := Mux(
+    portAUseMte1,
+    mte1.io.ubAddr,
+    Mux(portAUseMte3, mte3.io.ubAddr, Mux(portAUseVector, vectorCore.io.ubAddr, 0.U))
+  )
+  io.ubWdata := Mux(
+    portAUseMte3,
+    mte3.io.ubWdata,
+    Mux(portAUseVector, vectorCore.io.ubWdata, VecInit.fill(n)(0.S(aw.W)))
+  )
 
   mte1.io.ubRdata := io.ubRdata
   vectorCore.io.ubRdata := io.ubRdata
@@ -175,21 +182,21 @@ class AiCore(
   val wasInDecode = RegNext(scalar.io.dbgState === 2.U, false.B)
   when(wasInDecode) {
     switch(scalar.io.dbgOpLat) {
-      is(Opcode.NOP)       { perf.instrNop      := perf.instrNop + 1.U }
-      is(Opcode.HALT)      { perf.instrHalt     := perf.instrHalt + 1.U }
-      is(Opcode.LOAD)      { perf.instrLoad     := perf.instrLoad + 1.U }
-      is(Opcode.STORE)     { perf.instrStore    := perf.instrStore + 1.U }
-      is(Opcode.MATMUL)    { perf.instrMatmul   := perf.instrMatmul + 1.U }
-      is(Opcode.VECADD)    { perf.instrVecadd   := perf.instrVecadd + 1.U }
-      is(Opcode.RELU)      { perf.instrRelu     := perf.instrRelu + 1.U }
-      is(Opcode.DMA_LOAD)  { perf.dmaLoadCount  := perf.dmaLoadCount + 1.U }
+      is(Opcode.NOP) { perf.instrNop := perf.instrNop + 1.U }
+      is(Opcode.HALT) { perf.instrHalt := perf.instrHalt + 1.U }
+      is(Opcode.LOAD) { perf.instrLoad := perf.instrLoad + 1.U }
+      is(Opcode.STORE) { perf.instrStore := perf.instrStore + 1.U }
+      is(Opcode.MATMUL) { perf.instrMatmul := perf.instrMatmul + 1.U }
+      is(Opcode.VECADD) { perf.instrVecadd := perf.instrVecadd + 1.U }
+      is(Opcode.RELU) { perf.instrRelu := perf.instrRelu + 1.U }
+      is(Opcode.DMA_LOAD) { perf.dmaLoadCount := perf.dmaLoadCount + 1.U }
       is(Opcode.DMA_STORE) { perf.dmaStoreCount := perf.dmaStoreCount + 1.U }
     }
   }
 
   val cubeActive = RegInit(false.B)
   when(scalar.io.cubeStart) { cubeActive := true.B }
-  when(cubeCore.io.done)    { cubeActive := false.B }
+  when(cubeCore.io.done) { cubeActive := false.B }
   when(cubeActive) { perf.cubeTotalCycles := perf.cubeTotalCycles + 1.U }
   when(cubeCore.io.dbgFeeding) { perf.cubeComputeCycles := perf.cubeComputeCycles + 1.U }
 
@@ -211,8 +218,12 @@ class AiCore(
     perf.ubWrites := perf.ubWrites + 1.U
   }
 
-  when(scalar.io.vectorStart && scalar.io.vectorOp === 0.U) { perf.vecaddCount := perf.vecaddCount + 1.U }
-  when(scalar.io.vectorStart && scalar.io.vectorOp === 1.U) { perf.reluCount := perf.reluCount + 1.U }
+  when(scalar.io.vectorStart && scalar.io.vectorOp === 0.U) {
+    perf.vecaddCount := perf.vecaddCount + 1.U
+  }
+  when(scalar.io.vectorStart && scalar.io.vectorOp === 1.U) {
+    perf.reluCount := perf.reluCount + 1.U
+  }
 
   when(mte2.io.busy) { perf.dmaTotalCycles := perf.dmaTotalCycles + 1.U }
   when(cubeActive && (mte1.io.busy || mte2.io.busy)) {

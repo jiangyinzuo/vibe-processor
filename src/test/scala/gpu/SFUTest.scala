@@ -13,8 +13,8 @@ class SFUTest extends AnyFunSpec with ChiselSim {
       simulate(new SFU) { dut =>
         dut.io.valid.poke(true.B)
         dut.io.op.poke(GpuOpcode.EXP)
-        dut.io.x.poke(0.S)  // 0 in Q16.16
-        dut.clock.step(3)   // SFU has 3-cycle pipeline latency
+        dut.io.x.poke(0.S) // 0 in Q16.16
+        dut.clock.step(3) // SFU has 3-cycle pipeline latency
         val result = dut.io.result.peek().litValue.toInt
         println(s"e^0 result: $result")
         // e^0 = 1.0 = 65536 in Q16.16
@@ -27,7 +27,7 @@ class SFUTest extends AnyFunSpec with ChiselSim {
       simulate(new SFU) { dut =>
         dut.io.valid.poke(true.B)
         dut.io.op.poke(GpuOpcode.EXP)
-        dut.io.x.poke((1 << 16).S)  // 1.0 in Q16.16
+        dut.io.x.poke((1 << 16).S) // 1.0 in Q16.16
         dut.clock.step(3)
         val result = dut.io.result.peek().litValue.toInt
         println(s"e^1 result: $result")
@@ -40,7 +40,7 @@ class SFUTest extends AnyFunSpec with ChiselSim {
       simulate(new SFU) { dut =>
         dut.io.valid.poke(true.B)
         dut.io.op.poke(GpuOpcode.EXP)
-        dut.io.x.poke((-1 << 16).S)  // -1.0 in Q16.16
+        dut.io.x.poke((-1 << 16).S) // -1.0 in Q16.16
         dut.clock.step(3)
         val result = dut.io.result.peek().litValue.toInt
         println(s"e^-1 result: $result")

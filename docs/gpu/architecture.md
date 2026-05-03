@@ -84,6 +84,25 @@ ADD  R2, R1, R12       ; R2 = global thread id
 - **SharedRegisterFile**：按 `(warpId, laneId, regId)` 索引的 SM 级共享寄存器文件
 - **延迟隐藏**：Warp 在 LD 等待期间，scheduler 调度其他 Warp
 
+### Warp 切换与寄存器文件
+
+Warp 切换不会覆盖寄存器值，因为寄存器文件不是只按 `regId` 索引，而是按三元组索引：
+
+```text
+regs[warpId][laneId][regId]
+```
+
+例如：
+
+```text
+regs[0][0][R1] != regs[1][0][R1]
+regs[0][3][R2] != regs[1][3][R2]
+```
+
+所以从 `warp 0` 切换到 `warp 1` 时，调度器并不保存/恢复寄存器，只是让 dispatcher 在读写 `SharedRegisterFile` 时带上新的 `warpId`。`warp 0` 的 `R1` 和 `warp 1` 的 `R1` 物理上就是不同槽位。
+
+这也是 GPU 能快速切换 warp 来隐藏访存延迟的关键之一：resident warp 的寄存器长期驻留在 SM 片上寄存器文件里，切换时只需要改变调度选择、PC/active mask/scoreboard 等控制状态。
+
 ### 双调度器架构
 
 ```
@@ -95,9 +114,9 @@ ADD  R2, R1, R12       ; R2 = global thread id
   - 资源仲裁：GlobalMem 和 SharedMem 优先级仲裁
 ```
 
-**性能提升**：
-- 纯计算程序：2.00× 加速
-- 内存密集程序：3.00× 加速（延迟隐藏）
+**性能观察**：
+- 纯计算程序：`stalledWarpCycles=0`、`noEligibleCycles=0`
+- 内存密集程序：`stalledWarpCycles=88`、`noEligibleCycles=14`，说明访存等待被部分隐藏
 
 详见 [dual_scheduler_summary.md](dual_scheduler_summary.md)
 
@@ -189,7 +208,10 @@ scheduler.io.warpHalted(w) :=
 
 性能：
   总周期：39
-  活跃 Warp 周期：38
+  Live Warp 周期：119
+  Eligible Warp 周期：103
+  Stalled Warp 周期：16
+  No-eligible 周期：0
   说明：默认每 SM 执行 2 个 resident CTA，共 4 个 resident Warp
 ```
 
@@ -201,7 +223,11 @@ scheduler.io.warpHalted(w) :=
 
 性能：
   总周期：50
-  延迟隐藏效果：显著
+  Live Warp 周期：190
+  Eligible Warp 周期：102
+  Stalled Warp 周期：88
+  No-eligible 周期：14
+  说明：访存等待明显增加，但只有 14 个周期完全没有 Ready warp
 ```
 
 ### CTA/thread/block ID 验证
@@ -213,13 +239,13 @@ scheduler.io.warpHalted(w) :=
 验证：每个 CTA 写回 threadIdx=[0,1,2,3] 和 [4,5,6,7]，blockIdx 与 CTA ID 一致
 ```
 
-### 双调度器性能提升
+### 调度延迟隐藏指标
 
-| 测试场景 | 单调度器 | 双调度器 | 加速比 |
-|---------|---------|---------|--------|
-| **纯计算（10条ADD）** | 44 周期 | 22 周期 | **2.00×** |
-| **内存密集（latency=10）** | 84 周期 | 28 周期 | **3.00×** |
-| **混合程序（latency=5）** | 60 周期 | 20 周期 | **3.00×** |
+| 测试场景 | total | eligible | stalled | no-eligible | 结论 |
+|---------|------:|---------:|--------:|------------:|------|
+| **纯计算（10条ADD）** | 85 | 252 | 0 | 0 | 无访存等待 |
+| **内存密集（latency=10）** | 50 | 102 | 88 | 14 | 访存等待被部分隐藏 |
+| **混合程序（latency=5）** | 62 | 214 | 24 | 2 | 大多数等待被覆盖 |
 
 ---
 

@@ -20,7 +20,7 @@ import gpu._
   */
 class MatmulBenchmark extends AnyFunSpec with ChiselSim {
 
-  val N = 8  // 矩阵大小 8×8
+  val N = 8 // 矩阵大小 8×8
 
   describe("矩阵乘法性能对比 (8×8)") {
 
@@ -52,21 +52,21 @@ class MatmulBenchmark extends AnyFunSpec with ChiselSim {
 
         // 写入 L2（跳过 HBM，直接写 L2 简化测试）
         for (i <- 0 until N) {
-          writeL2(dut, i, a(i))      // A 矩阵
-          writeL2(dut, i + 8, w(i))  // W 矩阵
+          writeL2(dut, i, a(i)) // A 矩阵
+          writeL2(dut, i + 8, w(i)) // W 矩阵
         }
 
         // 程序：DMA_LOAD×2 → DMA_WAIT → LOAD×2 → MATMUL → STORE → DMA_STORE → HALT
         val program = Seq(
-          encDmaLoad(ubBase = 0, l2Base = 0),   // DMA: L2[0..7] → UB[0..7] (A)
-          encDmaLoad(ubBase = 8, l2Base = 8),   // DMA: L2[8..15] → UB[8..15] (W)
-          encDmaWait,                            // 等待 DMA 完成
-          encLoad(bufSel = 1, memAddr = 0),     // LOAD: UB[0..7] → actBuf (A) - bufSel=1 是 activation
-          encLoad(bufSel = 0, memAddr = 8),     // LOAD: UB[8..15] → weightBuf (W) - bufSel=0 是 weight
-          encMatmul,                             // MATMUL: C = A × W
-          encStore(bufSel = 2, memAddr = 16),   // STORE: cubeResult → UB[16..23]
+          encDmaLoad(ubBase = 0, l2Base = 0), // DMA: L2[0..7] → UB[0..7] (A)
+          encDmaLoad(ubBase = 8, l2Base = 8), // DMA: L2[8..15] → UB[8..15] (W)
+          encDmaWait, // 等待 DMA 完成
+          encLoad(bufSel = 1, memAddr = 0), // LOAD: UB[0..7] → actBuf (A) - bufSel=1 是 activation
+          encLoad(bufSel = 0, memAddr = 8), // LOAD: UB[8..15] → weightBuf (W) - bufSel=0 是 weight
+          encMatmul, // MATMUL: C = A × W
+          encStore(bufSel = 2, memAddr = 16), // STORE: cubeResult → UB[16..23]
           encDmaStore(ubBase = 16, l2Base = 16), // DMA: UB[16..23] → L2[16..23]
-          encDmaWait,                            // 等待 DMA 完成
+          encDmaWait, // 等待 DMA 完成
           encHalt
         )
 
@@ -79,8 +79,10 @@ class MatmulBenchmark extends AnyFunSpec with ChiselSim {
         // 验证结果
         val expected = matmul(a, w)
         for (i <- 0 until N; j <- 0 until N) {
-          assert(result(i)(j) == expected(i)(j),
-            s"NPU result mismatch at [$i][$j]: got ${result(i)(j)}, expected ${expected(i)(j)}")
+          assert(
+            result(i)(j) == expected(i)(j),
+            s"NPU result mismatch at [$i][$j]: got ${result(i)(j)}, expected ${expected(i)(j)}"
+          )
         }
 
         // 性能统计
@@ -97,7 +99,9 @@ class MatmulBenchmark extends AnyFunSpec with ChiselSim {
         println(f"气泡周期:           $bubbleCycles%4d")
         println(f"计算效率:           ${cubeComputeCycles * 100.0 / totalCycles}%.1f%%")
         println(f"DMA 占比:           ${dmaTotalCycles * 100.0 / totalCycles}%.1f%%")
-        println(f"理论峰值利用率:     ${cubeComputeCycles * 100.0 / (cubeComputeCycles + bubbleCycles)}%.1f%%")
+        println(
+          f"理论峰值利用率:     ${cubeComputeCycles * 100.0 / (cubeComputeCycles + bubbleCycles)}%.1f%%"
+        )
       }
     }
 
@@ -142,14 +146,14 @@ class MatmulBenchmark extends AnyFunSpec with ChiselSim {
           // 初始化：R15 = warpId (假设已设置)
           // 计算 C[warpId][0] = A[warpId][0]*W[0][0] + A[warpId][1]*W[1][0] + ...
           // 简化：只计算一个元素作为示例
-          enc(0x2, rd = 0, rs1 = 15, imm = 0),   // LD R0, [R15+0]  (A[warpId][0])
-          enc(0x2, rd = 1, rs1 = 0, imm = 8),    // LD R1, [0+8]    (W[0][0])
-          enc(0x5, rd = 2, rs1 = 0, rs2 = 1),    // MUL R2, R0, R1
-          enc(0x2, rd = 3, rs1 = 15, imm = 1),   // LD R3, [R15+1]  (A[warpId][1])
-          enc(0x2, rd = 4, rs1 = 0, imm = 9),    // LD R4, [0+9]    (W[1][0])
+          enc(0x2, rd = 0, rs1 = 15, imm = 0), // LD R0, [R15+0]  (A[warpId][0])
+          enc(0x2, rd = 1, rs1 = 0, imm = 8), // LD R1, [0+8]    (W[0][0])
+          enc(0x5, rd = 2, rs1 = 0, rs2 = 1), // MUL R2, R0, R1
+          enc(0x2, rd = 3, rs1 = 15, imm = 1), // LD R3, [R15+1]  (A[warpId][1])
+          enc(0x2, rd = 4, rs1 = 0, imm = 9), // LD R4, [0+9]    (W[1][0])
           enc(0x6, rd = 2, rs1 = 3, rs2 = 4, rs3 = 2), // MAD R2, R3, R4, R2
           enc(0x3, rs1 = 15, rs2 = 2, imm = 16), // ST [R15+16], R2  (C[warpId][0])
-          enc(0x1)                                // HALT
+          enc(0x1) // HALT
         )
 
         loadGpuProgram(dut, program)
@@ -177,9 +181,9 @@ class MatmulBenchmark extends AnyFunSpec with ChiselSim {
     }
 
     it("性能对比总结") {
-      println("\n" + "="*60)
+      println("\n" + "=" * 60)
       println("矩阵乘法性能对比总结 (8×8)")
-      println("="*60)
+      println("=" * 60)
       println("\n架构特点：")
       println("  NPU (昇腾):")
       println("    - 专用硬件：8×8 SystolicArray")
@@ -196,23 +200,23 @@ class MatmulBenchmark extends AnyFunSpec with ChiselSim {
       println("  - GPU 在通用计算上更灵活（可编程性强）")
       println("  - NPU 需要显式管理数据搬运（DMA）")
       println("  - GPU 通过 Warp 切换隐藏内存延迟")
-      println("="*60)
+      println("=" * 60)
     }
   }
 
   // ===== NPU 辅助函数 =====
 
   def encLoad(bufSel: Int, memAddr: Int): Long =
-    (0x2L << 28) | ((bufSel & 0x3).toLong << 26) | ((memAddr & 0xFFFF).toLong << 4)
+    (0x2L << 28) | ((bufSel & 0x3).toLong << 26) | ((memAddr & 0xffff).toLong << 4)
   def encStore(bufSel: Int, memAddr: Int): Long =
-    (0x3L << 28) | ((bufSel & 0x3).toLong << 26) | ((memAddr & 0xFFFF).toLong << 4)
+    (0x3L << 28) | ((bufSel & 0x3).toLong << 26) | ((memAddr & 0xffff).toLong << 4)
   def encDmaLoad(ubBase: Int, l2Base: Int): Long =
-    (0x8L << 28) | ((ubBase & 0xFF).toLong << 20) | ((l2Base & 0xFFFF).toLong << 4)
+    (0x8L << 28) | ((ubBase & 0xff).toLong << 20) | ((l2Base & 0xffff).toLong << 4)
   def encDmaStore(ubBase: Int, l2Base: Int): Long =
-    (0x9L << 28) | ((ubBase & 0xFF).toLong << 20) | ((l2Base & 0xFFFF).toLong << 4)
-  def encDmaWait: Long = 0xAL << 28
+    (0x9L << 28) | ((ubBase & 0xff).toLong << 20) | ((l2Base & 0xffff).toLong << 4)
+  def encDmaWait: Long = 0xaL << 28
   def encMatmul: Long = 0x4L << 28
-  def encHalt: Long   = 0x1L << 28
+  def encHalt: Long = 0x1L << 28
 
   def loadNpuProgram(dut: ToyAscendTop, instrs: Seq[Long]): Unit = {
     for ((instr, i) <- instrs.zipWithIndex) {
@@ -274,8 +278,8 @@ class MatmulBenchmark extends AnyFunSpec with ChiselSim {
   // ===== GPU 辅助函数 =====
 
   def enc(op: Int, rd: Int = 0, rs1: Int = 0, rs2: Int = 0, rs3: Int = 0, imm: Int = 0): Long =
-    ((op & 0xF).toLong << 28) | ((rd & 0xF).toLong << 24) | ((rs1 & 0xF).toLong << 20) |
-    ((rs2 & 0xF).toLong << 16) | ((rs3 & 0xF).toLong << 12) | (imm & 0xFFF).toLong
+    ((op & 0xf).toLong << 28) | ((rd & 0xf).toLong << 24) | ((rs1 & 0xf).toLong << 20) |
+      ((rs2 & 0xf).toLong << 16) | ((rs3 & 0xf).toLong << 12) | (imm & 0xfff).toLong
 
   def loadGpuProgram(dut: ToyGpuTop, instrs: Seq[Long]): Unit = {
     for ((instr, i) <- instrs.zipWithIndex) {

@@ -5,23 +5,23 @@ import chisel3.util._
 
 /** Vector Core.
   *
-  * Vector operations are now explicitly separated from the CubeCore path and
-  * operate through UB, matching the Ascend programming model more closely.
+  * Vector operations are now explicitly separated from the CubeCore path and operate through UB,
+  * matching the Ascend programming model more closely.
   */
 class VectorCore(
-    n:  Int = AscendParams.ArraySize,
+    n: Int = AscendParams.ArraySize,
     aw: Int = AscendParams.AccWidth
 ) extends Module {
   val io = IO(new Bundle {
     val start = Input(Bool())
-    val op    = Input(UInt(2.W))
+    val op = Input(UInt(2.W))
     val src1Addr = Input(UInt(AscendParams.UBAddrW.W))
     val src2Addr = Input(UInt(AscendParams.UBAddrW.W))
-    val done  = Output(Bool())
+    val done = Output(Bool())
 
-    val ubEn    = Output(Bool())
-    val ubWe    = Output(Bool())
-    val ubAddr  = Output(UInt(AscendParams.UBAddrW.W))
+    val ubEn = Output(Bool())
+    val ubWe = Output(Bool())
+    val ubAddr = Output(UInt(AscendParams.UBAddrW.W))
     val ubWdata = Output(Vec(n, SInt(aw.W)))
     val ubRdata = Input(Vec(n, SInt(aw.W)))
   })

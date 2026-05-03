@@ -4,8 +4,8 @@ import chisel3._
 import chisel3.util._
 
 object AiCpuOp {
-  val FILL    = 0.U(2.W)
-  val COPY    = 1.U(2.W)
+  val FILL = 0.U(2.W)
+  val COPY = 1.U(2.W)
   val ADD_IMM = 2.U(2.W)
 }
 
@@ -19,10 +19,9 @@ class AiCpuCommand(addrW: Int = AscendParams.L2AddrW) extends Bundle {
 
 /** Toy AI CPU auxiliary engine.
   *
-  * This is not a full ARM64 implementation. It models the architectural role
-  * that matters in this project: a device-side CPU-like engine that can run
-  * simple branch/control-heavy memory tasks on device memory while AiCores
-  * remain specialized for Cube/Vector kernels.
+  * This is not a full ARM64 implementation. It models the architectural role that matters in this
+  * project: a device-side CPU-like engine that can run simple branch/control-heavy memory tasks on
+  * device memory while AiCores remain specialized for Cube/Vector kernels.
   */
 class AiCpu(
     n: Int = AscendParams.ArraySize,
@@ -66,7 +65,11 @@ class AiCpu(
       when(io.cmd.valid) {
         cmdLat := io.cmd.bits
         rowIdx := 0.U
-        state := Mux(io.cmd.bits.rows === 0.U, sDone, Mux(io.cmd.bits.op === AiCpuOp.FILL, sWrite, sRead))
+        state := Mux(
+          io.cmd.bits.rows === 0.U,
+          sDone,
+          Mux(io.cmd.bits.op === AiCpuOp.FILL, sWrite, sRead)
+        )
       }
     }
 

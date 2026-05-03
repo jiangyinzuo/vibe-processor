@@ -5,7 +5,8 @@ import circt.stage.ChiselStage
 /** Generate Verilog for all Top modules. */
 object Elaborate extends App {
   val firtoolBase = Array("-disable-all-randomization", "-strip-debug-info")
-  val firtoolYosys = firtoolBase ++ Array("--lowering-options=disallowLocalVariables,disallowPackedArrays")
+  val firtoolYosys =
+    firtoolBase ++ Array("--lowering-options=disallowLocalVariables,disallowPackedArrays")
 
   // Ascend NPU
   ChiselStage.emitSystemVerilogFile(

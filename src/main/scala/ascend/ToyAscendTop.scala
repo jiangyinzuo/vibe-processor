@@ -6,45 +6,48 @@ import common.LatencyMem
 
 /** Toy Ascend NPU Top Level — Multi-core architecture.
   *
-  * Storage hierarchy:
-  *   HBM (off-chip) ──ext preload──► L2Buffer (shared) ──DMA──► UB (per-core) ──► Compute
+  * Storage hierarchy: HBM (off-chip) ──ext preload──► L2Buffer (shared) ──DMA──► UB (per-core) ──►
+  * Compute
   *
-  * The top-level ControlCpu models the device-side task/control plane. It owns
-  * SPMD block dispatch and launches physical AiCores as execution slots.
+  * The top-level ControlCpu models the device-side task/control plane. It owns SPMD block dispatch
+  * and launches physical AiCores as execution slots.
   *
-  * @param numCores   Number of AI Cores (default 2).
-  * @param blockStride L2 row stride between SPMD logical blocks.
-  * @param hbmLatency HBM read latency in cycles.
+  * @param numCores
+  *   Number of AI Cores (default 2).
+  * @param blockStride
+  *   L2 row stride between SPMD logical blocks.
+  * @param hbmLatency
+  *   HBM read latency in cycles.
   */
 class ToyAscendTop(
-    n:          Int = AscendParams.ArraySize,
-    dw:         Int = AscendParams.DataWidth,
-    aw:         Int = AscendParams.AccWidth,
-    numCores:   Int = AscendParams.NumCores,
+    n: Int = AscendParams.ArraySize,
+    dw: Int = AscendParams.DataWidth,
+    aw: Int = AscendParams.AccWidth,
+    numCores: Int = AscendParams.NumCores,
     blockStride: Int = AscendParams.L2SliceSize,
     hbmLatency: Int = AscendParams.HBMLatency
 ) extends Module {
   val io = IO(new Bundle {
-    val start  = Input(Bool())
+    val start = Input(Bool())
     val blockDim = Input(UInt(AscendParams.BlockDimWidth.W))
-    val halted = Output(Bool())  // true when ALL cores halted
+    val halted = Output(Bool()) // true when ALL cores halted
     // Instruction memory preload
-    val imemLoadEn   = Input(Bool())
+    val imemLoadEn = Input(Bool())
     val imemLoadAddr = Input(UInt(8.W))
     val imemLoadData = Input(UInt(AscendParams.InstrWidth.W))
     // L2 external port (test preload/readback of shared on-chip buffer)
     val l2Ext = new Bundle {
-      val en    = Input(Bool())
-      val we    = Input(Bool())
-      val addr  = Input(UInt(AscendParams.L2AddrW.W))
+      val en = Input(Bool())
+      val we = Input(Bool())
+      val addr = Input(UInt(AscendParams.L2AddrW.W))
       val wdata = Input(Vec(n, SInt(aw.W)))
       val rdata = Output(Vec(n, SInt(aw.W)))
     }
     // HBM external port (test preload/readback of off-chip memory)
     val hbmExt = new Bundle {
-      val en    = Input(Bool())
-      val we    = Input(Bool())
-      val addr  = Input(UInt(AscendParams.HBMAddrW.W))
+      val en = Input(Bool())
+      val we = Input(Bool())
+      val addr = Input(UInt(AscendParams.HBMAddrW.W))
       val wdata = Input(Vec(n, SInt(aw.W)))
       val rdata = Output(Vec(n, SInt(aw.W)))
     }
@@ -68,20 +71,24 @@ class ToyAscendTop(
   }
 
   // === HBM (off-chip, with latency) ===
-  val hbm = Module(new LatencyMem(
-    gen = Vec(n, SInt(aw.W)), depth = AscendParams.HBMDepth,
-    latency = hbmLatency, addrW = AscendParams.HBMAddrW
-  ))
+  val hbm = Module(
+    new LatencyMem(
+      gen = Vec(n, SInt(aw.W)),
+      depth = AscendParams.HBMDepth,
+      latency = hbmLatency,
+      addrW = AscendParams.HBMAddrW
+    )
+  )
   // HBM external port (direct access for test preload)
-  hbm.io.direct.en    := io.hbmExt.en
-  hbm.io.direct.we    := io.hbmExt.we
-  hbm.io.direct.addr  := io.hbmExt.addr
+  hbm.io.direct.en := io.hbmExt.en
+  hbm.io.direct.we := io.hbmExt.we
+  hbm.io.direct.addr := io.hbmExt.addr
   hbm.io.direct.wdata := io.hbmExt.wdata
-  io.hbmExt.rdata     := hbm.io.direct.rdata
+  io.hbmExt.rdata := hbm.io.direct.rdata
   // HBM req port — not used by cores (they access L2); driven by external or idle
   hbm.io.req.valid := false.B
-  hbm.io.req.we    := false.B
-  hbm.io.req.addr  := 0.U
+  hbm.io.req.we := false.B
+  hbm.io.req.addr := 0.U
   hbm.io.req.wdata := VecInit.fill(n)(0.S(aw.W))
 
   // === Shared L2 Buffer (on-chip, multi-port for cores + external) ===
@@ -109,8 +116,10 @@ class ToyAscendTop(
 
   // === AI Cores ===
   val controlCpu = Module(new ControlCpu(numCores))
-  val cores = Array.tabulate(numCores)(i => Module(new AiCore(n, dw, aw, coreId = i, blockStride = blockStride)))
-  val ubs   = Array.fill(numCores)(Module(new UnifiedBuffer(n, aw, depth = AscendParams.UBDepth)))
+  val cores = Array.tabulate(numCores)(i =>
+    Module(new AiCore(n, dw, aw, coreId = i, blockStride = blockStride))
+  )
+  val ubs = Array.fill(numCores)(Module(new UnifiedBuffer(n, aw, depth = AscendParams.UBDepth)))
 
   controlCpu.io.start := io.start
   controlCpu.io.blockDim := io.blockDim
@@ -127,26 +136,30 @@ class ToyAscendTop(
 
   for (i <- 0 until numCores) {
     val core = cores(i)
-    val ub   = ubs(i)
+    val ub = ubs(i)
 
     core.io.start := controlCpu.io.coreLaunch(i).valid
-    core.io.blockIdx := Mux(controlCpu.io.coreLaunch(i).valid, controlCpu.io.coreLaunch(i).bits, controlCpu.io.coreBlockIdx(i))
+    core.io.blockIdx := Mux(
+      controlCpu.io.coreLaunch(i).valid,
+      controlCpu.io.coreLaunch(i).bits,
+      controlCpu.io.coreBlockIdx(i)
+    )
 
     // Shared instruction memory: each core reads independently
     core.io.imemData := imem.read(core.io.imemAddr)
 
     // Per-core UB (dual-port: A for Scalar, B for DMA)
-    ub.io.portA.en    := core.io.ubEn
-    ub.io.portA.we    := core.io.ubWe
-    ub.io.portA.addr  := core.io.ubAddr
+    ub.io.portA.en := core.io.ubEn
+    ub.io.portA.we := core.io.ubWe
+    ub.io.portA.addr := core.io.ubAddr
     ub.io.portA.wdata := core.io.ubWdata
-    core.io.ubRdata   := ub.io.portA.rdata
+    core.io.ubRdata := ub.io.portA.rdata
 
-    ub.io.portB.en    := core.io.ubEnB
-    ub.io.portB.we    := core.io.ubWeB
-    ub.io.portB.addr  := core.io.ubAddrB
+    ub.io.portB.en := core.io.ubEnB
+    ub.io.portB.we := core.io.ubWeB
+    ub.io.portB.addr := core.io.ubAddrB
     ub.io.portB.wdata := core.io.ubWdataB
-    core.io.ubRdataB  := ub.io.portB.rdata
+    core.io.ubRdataB := ub.io.portB.rdata
 
     // Core ↔ L2
     core.io.l2Rdata := l2.read(core.io.l2Addr)

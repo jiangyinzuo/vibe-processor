@@ -2,8 +2,7 @@ package top
 
 import java.io.File
 
-/** Render all d2 diagram sources in docs/diagrams/ to SVG.
-  * Run: sbt "runMain top.Visualize"
+/** Render all d2 diagram sources in docs/diagrams/ to SVG. Run: sbt "runMain top.Visualize"
   */
 object Visualize extends App {
 

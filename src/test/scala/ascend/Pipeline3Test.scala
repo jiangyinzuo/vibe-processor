@@ -4,24 +4,23 @@ import chisel3._
 import chisel3.simulator.scalatest.ChiselSim
 import org.scalatest.funspec.AnyFunSpec
 
-/**
- * 三级流水线测试：验证 LOAD 和 MATMUL 分离后的性能提升
- */
+/** 三级流水线测试：验证 LOAD 和 MATMUL 分离后的性能提升
+  */
 class Pipeline3Test extends AnyFunSpec with ChiselSim {
 
   val N = AscendParams.ArraySize
 
   def encLoad(bufSel: Int, memAddr: Int): Long =
-    (0x2L << 28) | ((bufSel & 0x3).toLong << 26) | ((memAddr & 0xFFFF).toLong << 4)
+    (0x2L << 28) | ((bufSel & 0x3).toLong << 26) | ((memAddr & 0xffff).toLong << 4)
   def encStore(bufSel: Int, memAddr: Int): Long =
-    (0x3L << 28) | ((bufSel & 0x3).toLong << 26) | ((memAddr & 0xFFFF).toLong << 4)
+    (0x3L << 28) | ((bufSel & 0x3).toLong << 26) | ((memAddr & 0xffff).toLong << 4)
   def encDmaLoad(ubBase: Int, l2Base: Int): Long =
-    (0x8L << 28) | ((ubBase & 0xFF).toLong << 20) | ((l2Base & 0xFFFF).toLong << 4)
+    (0x8L << 28) | ((ubBase & 0xff).toLong << 20) | ((l2Base & 0xffff).toLong << 4)
   def encDmaStore(ubBase: Int, l2Base: Int): Long =
-    (0x9L << 28) | ((ubBase & 0xFF).toLong << 20) | ((l2Base & 0xFFFF).toLong << 4)
-  def encDmaWait: Long = 0xAL << 28
+    (0x9L << 28) | ((ubBase & 0xff).toLong << 20) | ((l2Base & 0xffff).toLong << 4)
+  def encDmaWait: Long = 0xaL << 28
   def encMatmul: Long = 0x4L << 28
-  def encHalt: Long   = 0x1L << 28
+  def encHalt: Long = 0x1L << 28
 
   def loadProgram(dut: ToyAscendTop, instrs: Seq[Long]): Unit = {
     for ((instr, i) <- instrs.zipWithIndex) {
@@ -114,9 +113,9 @@ class Pipeline3Test extends AnyFunSpec with ChiselSim {
           encDmaLoad(ubBase = 0, l2Base = 2 * N),
           encDmaLoad(ubBase = N, l2Base = 3 * N),
           encDmaWait,
-          encLoad(1, 0),      // ✅ 提前 LOAD，与 Tile 0 的 MATMUL 重叠
-          encLoad(0, N),      // ✅ 提前 LOAD，与 Tile 0 的 MATMUL 重叠
-          encMatmul,          // 计算 Tile 0
+          encLoad(1, 0), // ✅ 提前 LOAD，与 Tile 0 的 MATMUL 重叠
+          encLoad(0, N), // ✅ 提前 LOAD，与 Tile 0 的 MATMUL 重叠
+          encMatmul, // 计算 Tile 0
           encStore(2, 2 * N),
           encDmaStore(ubBase = 2 * N, l2Base = (numTiles * 2) * N),
 
@@ -124,14 +123,14 @@ class Pipeline3Test extends AnyFunSpec with ChiselSim {
           encDmaLoad(ubBase = 0, l2Base = 4 * N),
           encDmaLoad(ubBase = N, l2Base = 5 * N),
           encDmaWait,
-          encLoad(1, 0),      // ✅ 提前 LOAD，与 Tile 1 的 MATMUL 重叠
-          encLoad(0, N),      // ✅ 提前 LOAD，与 Tile 1 的 MATMUL 重叠
-          encMatmul,          // 计算 Tile 1
+          encLoad(1, 0), // ✅ 提前 LOAD，与 Tile 1 的 MATMUL 重叠
+          encLoad(0, N), // ✅ 提前 LOAD，与 Tile 1 的 MATMUL 重叠
+          encMatmul, // 计算 Tile 1
           encStore(2, 2 * N),
           encDmaStore(ubBase = 2 * N, l2Base = (numTiles * 2 + 1) * N),
 
           // 最后一个 tile
-          encMatmul,          // 计算 Tile 2
+          encMatmul, // 计算 Tile 2
           encStore(2, 2 * N),
           encDmaStore(ubBase = 2 * N, l2Base = (numTiles * 2 + 2) * N),
           encDmaWait,
@@ -144,14 +143,14 @@ class Pipeline3Test extends AnyFunSpec with ChiselSim {
         // 验证结果
         for (t <- 0 until numTiles) {
           val (a, w) = tiles(t)
-          val expected = Array.tabulate(N, N)((i, j) =>
-            (0 until N).map(k => a(i)(k) * w(k)(j)).sum
-          )
+          val expected = Array.tabulate(N, N)((i, j) => (0 until N).map(k => a(i)(k) * w(k)(j)).sum)
           val result = Array.tabulate(N)(i => readL2(dut, (numTiles * 2 + t) * N + i))
 
           for (i <- 0 until N; j <- 0 until N) {
-            assert(result(i)(j) == expected(i)(j),
-              s"Tile $t mismatch at [$i][$j]: got ${result(i)(j)}, expected ${expected(i)(j)}")
+            assert(
+              result(i)(j) == expected(i)(j),
+              s"Tile $t mismatch at [$i][$j]: got ${result(i)(j)}, expected ${expected(i)(j)}"
+            )
           }
         }
 
@@ -160,9 +159,9 @@ class Pipeline3Test extends AnyFunSpec with ChiselSim {
         val dmaTotalCycles = perf.dmaTotalCycles.litValue.toInt
         val overlapCycles = perf.overlapCycles.litValue.toInt
 
-        println("\n" + "="*70)
+        println("\n" + "=" * 70)
         println("三级流水线性能测试")
-        println("="*70)
+        println("=" * 70)
         println(f"Tile 数量:              $numTiles")
         println(f"总周期数:               $cycles%5d")
         println(f"Cube 计算周期:          $cubeComputeCycles%5d")
@@ -170,14 +169,17 @@ class Pipeline3Test extends AnyFunSpec with ChiselSim {
         println(f"重叠周期:               $overlapCycles%5d")
         println(f"计算效率:               ${cubeComputeCycles * 100.0 / cycles}%.1f%%")
         println(f"DMA 占比:               ${dmaTotalCycles * 100.0 / cycles}%.1f%%")
-        println(f"重叠率:                 ${if (dmaTotalCycles > 0) overlapCycles * 100.0 / dmaTotalCycles else 0.0}%.1f%%")
+        println(
+          f"重叠率:                 ${if (dmaTotalCycles > 0) overlapCycles * 100.0 / dmaTotalCycles
+            else 0.0}%.1f%%"
+        )
         println(f"每个 Tile 平均周期:     ${cycles.toDouble / numTiles}%.1f")
-        println("="*70)
+        println("=" * 70)
         println("说明：")
         println("  - LOAD 指令提前执行，与前一个 MATMUL 重叠")
         println("  - 三级流水线：DMA → LOAD → MATMUL")
         println("  - 预期重叠周期应该显著高于 52")
-        println("="*70)
+        println("=" * 70)
 
         // 断言：重叠率应该显著提升
         assert(overlapCycles > 52, s"Expected overlap > 52, but got $overlapCycles")

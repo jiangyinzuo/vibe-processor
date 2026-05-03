@@ -7,12 +7,20 @@ import org.scalatest.funspec.AnyFunSpec
 class InstructionDispatcherMultiIssueTest extends AnyFunSpec with ChiselSim {
 
   def enc(op: Int, rd: Int = 0, rs1: Int = 0, rs2: Int = 0, rs3: Int = 0, imm: Int = 0): Long =
-    ((op & 0xF).toLong << 28) | ((rd & 0xF).toLong << 24) | ((rs1 & 0xF).toLong << 20) |
-      ((rs2 & 0xF).toLong << 16) | ((rs3 & 0xF).toLong << 12) | (imm & 0xFFF).toLong
+    ((op & 0xf).toLong << 28) | ((rd & 0xf).toLong << 24) | ((rs1 & 0xf).toLong << 20) |
+      ((rs2 & 0xf).toLong << 16) | ((rs3 & 0xf).toLong << 12) | (imm & 0xfff).toLong
 
   describe("InstructionDispatcher multi-issue") {
     it("issues ALU and SFU work from different warps in the same sub-partition") {
-      simulate(new InstructionDispatcher(numWarps = 4, warpWidth = 4, numCores = 8, numSchedulers = 2, gmemLatency = 1)) { dut =>
+      simulate(
+        new InstructionDispatcher(
+          numWarps = 4,
+          warpWidth = 4,
+          numCores = 8,
+          numSchedulers = 2,
+          gmemLatency = 1
+        )
+      ) { dut =>
         val warpWidth = 4
         val numCores = 8
         val numSchedulers = 2
@@ -53,6 +61,10 @@ class InstructionDispatcherMultiIssueTest extends AnyFunSpec with ChiselSim {
         dut.io.selectedWarp(0)(1).bits.poke(1.U)
 
         dut.clock.step(2)
+
+        assert(dut.io.perf.aluIssue.peek().litToBoolean, "ALU issue event was not raised")
+        assert(dut.io.perf.sfuIssue.peek().litToBoolean, "SFU issue event was not raised")
+        assert(dut.io.perf.dualIssue.peek().litToBoolean, "dual-issue event was not raised")
 
         for (lane <- 0 until warpWidth) {
           assert(dut.io.coreValid(lane).peek().litToBoolean, s"ALU lane $lane did not issue")

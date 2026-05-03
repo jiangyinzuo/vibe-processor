@@ -4,18 +4,17 @@ import chisel3._
 import chisel3.util._
 
 object CubeLocalTarget {
-  val ACT    = 0.U(1.W)
+  val ACT = 0.U(1.W)
   val WEIGHT = 1.U(1.W)
 }
 
 /** Cube Core.
   *
-  * This is the explicit Cube side of the toy Ascend core. It owns the
-  * Cube-facing local memories: L1 staging writes land in L0A/L0B, Cube writes
-  * results into L0C, and MTE3 reads L0C back out.
+  * This is the explicit Cube side of the toy Ascend core. It owns the Cube-facing local memories:
+  * L1 staging writes land in L0A/L0B, Cube writes results into L0C, and MTE3 reads L0C back out.
   */
 class CubeCore(
-    n:  Int = AscendParams.ArraySize,
+    n: Int = AscendParams.ArraySize,
     dw: Int = AscendParams.DataWidth,
     aw: Int = AscendParams.AccWidth,
     tileSlots: Int = AscendParams.CubeTileSlots
@@ -23,14 +22,14 @@ class CubeCore(
   require(tileSlots >= 2, "CubeCore needs at least two tile slots for LOAD/MATMUL decoupling")
 
   val io = IO(new Bundle {
-    val start       = Input(Bool())
-    val done        = Output(Bool())
+    val start = Input(Bool())
+    val done = Output(Bool())
     val resultValid = Output(Bool())
 
     val mte1Write = Flipped(Valid(new Bundle {
       val target = UInt(1.W)
-      val row    = UInt(log2Ceil(n).W)
-      val data   = Vec(n, SInt(dw.W))
+      val row = UInt(log2Ceil(n).W)
+      val data = Vec(n, SInt(dw.W))
     }))
 
     val l0cReadRow = Input(UInt(log2Ceil(n).W))
@@ -43,7 +42,7 @@ class CubeCore(
 
   val l0a = RegInit(VecInit.fill(tileSlots, n, n)(0.S(dw.W)))
   val l0b = RegInit(VecInit.fill(tileSlots, n, n)(0.S(dw.W)))
-  val l0c     = RegInit(VecInit.fill(n, n)(0.S(aw.W)))
+  val l0c = RegInit(VecInit.fill(n, n)(0.S(aw.W)))
 
   val slotW = log2Ceil(tileSlots)
   val fillSlot = RegInit(0.U(slotW.W))

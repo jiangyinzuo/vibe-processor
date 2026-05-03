@@ -5,9 +5,9 @@ import chisel3.util._
 
 /** Reusable 1D SPMD logical-block scheduler.
   *
-  * It tracks logical block issue/completion and assigns new blockIdx values to
-  * idle physical execution slots. The module is intentionally independent of
-  * AiCore internals so the AI CPU control plane can reuse it directly.
+  * It tracks logical block issue/completion and assigns new blockIdx values to idle physical
+  * execution slots. The module is intentionally independent of AiCore internals so the AI CPU
+  * control plane can reuse it directly.
   */
 class SpmdBlockScheduler(
     numSlots: Int,

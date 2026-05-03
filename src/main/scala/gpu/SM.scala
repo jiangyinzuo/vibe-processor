@@ -13,32 +13,32 @@ import chisel3.util._
   *   - SharedMem 和 GlobalMem 请求路径仍由 SM 顶层统一仲裁
   */
 class SM(
-    numWarps:    Int = 4,
-    warpWidth:   Int = 8,
-    numCores:    Int = 16,
-    dw:          Int = GpuParams.DataWidth,
-    memLatency:  Int = 1,
+    numWarps: Int = 4,
+    warpWidth: Int = 8,
+    numCores: Int = 16,
+    dw: Int = GpuParams.DataWidth,
+    memLatency: Int = 1,
     maxCTAsPerSM: Int = GpuParams.MaxCTAsPerSM,
     warpsPerCTA: Int = GpuParams.WarpsPerCTA
 ) extends Module {
   val io = IO(new Bundle {
-    val start     = Input(Bool())
+    val start = Input(Bool())
     val allHalted = Output(Bool())
 
     // Resident CTA slots inside this SM.
     val ctaLaunch = Input(Vec(maxCTAsPerSM, Valid(UInt(GpuParams.CTAIdWidth.W))))
-    val ctaDone   = Output(Vec(maxCTAsPerSM, Valid(UInt(GpuParams.CTAIdWidth.W))))
+    val ctaDone = Output(Vec(maxCTAsPerSM, Valid(UInt(GpuParams.CTAIdWidth.W))))
     val ctaActive = Output(Vec(maxCTAsPerSM, Bool()))
-    val ctaId     = Output(Vec(maxCTAsPerSM, UInt(GpuParams.CTAIdWidth.W)))
+    val ctaId = Output(Vec(maxCTAsPerSM, UInt(GpuParams.CTAIdWidth.W)))
 
     // 指令内存（每个 Warp 一个端口）
-    val imemAddr  = Output(Vec(numWarps, UInt(8.W)))
-    val imemData  = Input(Vec(numWarps, UInt(GpuParams.InstrWidth.W)))
+    val imemAddr = Output(Vec(numWarps, UInt(8.W)))
+    val imemData = Input(Vec(numWarps, UInt(GpuParams.InstrWidth.W)))
 
     // Global memory
-    val gmemEn    = Output(Bool())
-    val gmemWe    = Output(Bool())
-    val gmemAddr  = Output(UInt(GpuParams.GlobalAddrW.W))
+    val gmemEn = Output(Bool())
+    val gmemWe = Output(Bool())
+    val gmemAddr = Output(UInt(GpuParams.GlobalAddrW.W))
     val gmemWdata = Output(Vec(warpWidth, SInt(dw.W)))
     val gmemRdata = Input(Vec(warpWidth, SInt(dw.W)))
 
@@ -46,15 +46,21 @@ class SM(
     val perf = Output(new GpuPerfCounters)
 
     // Debug
-    val dbgGrant  = Output(Vec(numWarps, Bool()))
+    val dbgGrant = Output(Vec(numWarps, Bool()))
   })
 
   require(numWarps == 4, "Currently only supports 4 warps")
   require(maxCTAsPerSM > 1, "SM should model multiple resident CTAs")
   require(warpsPerCTA > 0, "warpsPerCTA must be positive")
   require(numWarps == maxCTAsPerSM * warpsPerCTA, "numWarps must equal maxCTAsPerSM * warpsPerCTA")
-  require(warpWidth == 4 || warpWidth == 8, s"Currently only supports warp width of 4 or 8, got $warpWidth")
-  require(numCores == 16 || numCores == 8, s"Currently only supports 8 or 16 CUDA cores, got $numCores")
+  require(
+    warpWidth == 4 || warpWidth == 8,
+    s"Currently only supports warp width of 4 or 8, got $warpWidth"
+  )
+  require(
+    numCores == 16 || numCores == 8,
+    s"Currently only supports 8 or 16 CUDA cores, got $numCores"
+  )
 
   val numSubPartitions = numCores / warpWidth
   require(numCores % warpWidth == 0, "numCores must be a multiple of warpWidth")
@@ -93,14 +99,20 @@ class SM(
   memWbWarpId := 0.U
 
   for (i <- 0 until numWarps) {
-    when(warpContexts(i).started && warpContexts(i).state === WarpState.Stalled && warpContexts(i).memWaitCounter === 0.U) {
+    when(
+      warpContexts(i).started && warpContexts(i).state === WarpState.Stalled && warpContexts(
+        i
+      ).memWaitCounter === 0.U
+    ) {
       hasMemWb := true.B
       memWbWarpId := i.U
     }
   }
 
   // === 指令分发器 ===
-  val dispatcher = Module(new InstructionDispatcher(numWarps, warpWidth, numCores, numSubPartitions, memLatency))
+  val dispatcher = Module(
+    new InstructionDispatcher(numWarps, warpWidth, numCores, numSubPartitions, memLatency)
+  )
 
   // 连接 sub-partitions 到分发器和执行单元切片
   // 当有内存写回时，禁止发射新指令（避免寄存器文件写端口冲突）
@@ -218,7 +230,7 @@ class SM(
           regFile.io.wrAddr(lane).warpId := i.U
           regFile.io.wrAddr(lane).laneId := lane.U
           regFile.io.wrAddr(lane).rd := warpContexts(i).memRdReg
-          regFile.io.wrData(lane) := warpContexts(i).memRdData(lane)  // 使用缓冲的数据
+          regFile.io.wrData(lane) := warpContexts(i).memRdData(lane) // 使用缓冲的数据
         }
         // 恢复到 Ready 状态
         warpContexts(i).state := WarpState.Ready
@@ -280,6 +292,13 @@ class SM(
   // === 性能计数器 ===
   val totalCycles = RegInit(0.U(32.W))
   val activeWarpCycles = RegInit(0.U(32.W))
+  val eligibleWarpCycles = RegInit(0.U(32.W))
+  val stalledWarpCycles = RegInit(0.U(32.W))
+  val noEligibleCycles = RegInit(0.U(32.W))
+  val aluIssueCycles = RegInit(0.U(32.W))
+  val sfuIssueCycles = RegInit(0.U(32.W))
+  val memIssueCycles = RegInit(0.U(32.W))
+  val dualIssueCycles = RegInit(0.U(32.W))
   val gmemReads = RegInit(0.U(16.W))
   val gmemWrites = RegInit(0.U(16.W))
   val ctaLaunches = RegInit(0.U(16.W))
@@ -292,6 +311,13 @@ class SM(
   when(io.start) {
     totalCycles := 0.U
     activeWarpCycles := 0.U
+    eligibleWarpCycles := 0.U
+    stalledWarpCycles := 0.U
+    noEligibleCycles := 0.U
+    aluIssueCycles := 0.U
+    sfuIssueCycles := 0.U
+    memIssueCycles := 0.U
+    dualIssueCycles := 0.U
     gmemReads := 0.U
     gmemWrites := 0.U
     ctaLaunches := ctaLaunchCount
@@ -300,12 +326,32 @@ class SM(
   }.elsewhen(smHasActiveCTA) {
     totalCycles := totalCycles + 1.U
 
-    // 统计活跃的 Warp 数量
-    val activeWarps = PopCount(VecInit(warpContexts.map(w =>
-      w.started && (w.state === WarpState.Ready || w.state === WarpState.Stalled)
-    )))
+    // 统计 live/eligible/stalled warp。这里的 eligible 是教学用定义：
+    // warp 已经启动且处于 Ready 状态，调度器可以优先选择它来隐藏其它 warp 的访存等待。
+    val eligibleWarps =
+      PopCount(VecInit(warpContexts.map(w => w.started && w.state === WarpState.Ready)))
+    val stalledWarps =
+      PopCount(VecInit(warpContexts.map(w => w.started && w.state === WarpState.Stalled)))
+    val activeWarps = PopCount(
+      VecInit(
+        warpContexts.map(w =>
+          w.started && (w.state === WarpState.Ready || w.state === WarpState.Stalled)
+        )
+      )
+    )
     activeWarpCycles := activeWarpCycles + activeWarps
+    eligibleWarpCycles := eligibleWarpCycles + eligibleWarps
+    stalledWarpCycles := stalledWarpCycles + stalledWarps
+    when(activeWarps =/= 0.U && eligibleWarps === 0.U) {
+      noEligibleCycles := noEligibleCycles + 1.U
+    }
     activeCTACycles := activeCTACycles + PopCount(ctaActive)
+
+    // 统计实际 issue 事件。它们来自 dispatcher 的执行端口 valid，而不是 scheduler grant。
+    when(dispatcher.io.perf.aluIssue) { aluIssueCycles := aluIssueCycles + 1.U }
+    when(dispatcher.io.perf.sfuIssue) { sfuIssueCycles := sfuIssueCycles + 1.U }
+    when(dispatcher.io.perf.memIssue) { memIssueCycles := memIssueCycles + 1.U }
+    when(dispatcher.io.perf.dualIssue) { dualIssueCycles := dualIssueCycles + 1.U }
 
     // 统计内存访问
     when(io.gmemEn) {
@@ -323,6 +369,13 @@ class SM(
 
   io.perf.totalCycles := totalCycles
   io.perf.activeWarpCycles := activeWarpCycles
+  io.perf.eligibleWarpCycles := eligibleWarpCycles
+  io.perf.stalledWarpCycles := stalledWarpCycles
+  io.perf.noEligibleCycles := noEligibleCycles
+  io.perf.aluIssueCycles := aluIssueCycles
+  io.perf.sfuIssueCycles := sfuIssueCycles
+  io.perf.memIssueCycles := memIssueCycles
+  io.perf.dualIssueCycles := dualIssueCycles
   io.perf.gmemReads := gmemReads
   io.perf.gmemWrites := gmemWrites
   io.perf.ctaLaunches := ctaLaunches

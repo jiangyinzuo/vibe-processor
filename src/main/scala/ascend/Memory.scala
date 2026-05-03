@@ -2,29 +2,29 @@ package ascend
 
 import chisel3._
 
-/** Unified Buffer: dual-port synchronous SRAM.
-  * Each word is N * ACC_WIDTH bits (Vec of N SInt(ACC_WIDTH)).
+/** Unified Buffer: dual-port synchronous SRAM. Each word is N * ACC_WIDTH bits (Vec of N
+  * SInt(ACC_WIDTH)).
   */
 class UnifiedBuffer(
-    n:     Int = AscendParams.ArraySize,
-    aw:    Int = AscendParams.AccWidth,
+    n: Int = AscendParams.ArraySize,
+    aw: Int = AscendParams.AccWidth,
     depth: Int = AscendParams.UBDepth,
     addrW: Int = AscendParams.UBAddrW
 ) extends Module {
   val io = IO(new Bundle {
     // Port A (scalar unit)
     val portA = new Bundle {
-      val en    = Input(Bool())
-      val we    = Input(Bool())
-      val addr  = Input(UInt(addrW.W))
+      val en = Input(Bool())
+      val we = Input(Bool())
+      val addr = Input(UInt(addrW.W))
       val wdata = Input(Vec(n, SInt(aw.W)))
       val rdata = Output(Vec(n, SInt(aw.W)))
     }
     // Port B (external / test)
     val portB = new Bundle {
-      val en    = Input(Bool())
-      val we    = Input(Bool())
-      val addr  = Input(UInt(addrW.W))
+      val en = Input(Bool())
+      val we = Input(Bool())
+      val addr = Input(UInt(addrW.W))
       val wdata = Input(Vec(n, SInt(aw.W)))
       val rdata = Output(Vec(n, SInt(aw.W)))
     }
@@ -48,9 +48,9 @@ class UnifiedBuffer(
 /** Instruction Memory: combinational read, synchronous write (for preloading). */
 class InstrMem(depth: Int = AscendParams.IMEMDepth) extends Module {
   val io = IO(new Bundle {
-    val addr     = Input(UInt(8.W))
-    val instr    = Output(UInt(AscendParams.InstrWidth.W))
-    val loadEn   = Input(Bool())
+    val addr = Input(UInt(8.W))
+    val instr = Output(UInt(AscendParams.InstrWidth.W))
+    val loadEn = Input(Bool())
     val loadAddr = Input(UInt(8.W))
     val loadData = Input(UInt(AscendParams.InstrWidth.W))
   })

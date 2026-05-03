@@ -13,21 +13,21 @@ import org.scalatest.funspec.AnyFunSpec
   */
 class LargeMatmulTest extends AnyFunSpec with ChiselSim {
 
-  val N = AscendParams.ArraySize  // 4×4 tile size
+  val N = AscendParams.ArraySize // 4×4 tile size
 
   def encLoad(bufSel: Int, memAddr: Int): Long =
-    (0x2L << 28) | ((bufSel & 0x3).toLong << 26) | ((memAddr & 0xFFFF).toLong << 4)
+    (0x2L << 28) | ((bufSel & 0x3).toLong << 26) | ((memAddr & 0xffff).toLong << 4)
   def encStore(bufSel: Int, memAddr: Int): Long =
-    (0x3L << 28) | ((bufSel & 0x3).toLong << 26) | ((memAddr & 0xFFFF).toLong << 4)
+    (0x3L << 28) | ((bufSel & 0x3).toLong << 26) | ((memAddr & 0xffff).toLong << 4)
   def encDmaLoad(ubBase: Int, l2Base: Int): Long =
-    (0x8L << 28) | ((ubBase & 0xFF).toLong << 20) | ((l2Base & 0xFFFF).toLong << 4)
+    (0x8L << 28) | ((ubBase & 0xff).toLong << 20) | ((l2Base & 0xffff).toLong << 4)
   def encDmaStore(ubBase: Int, l2Base: Int): Long =
-    (0x9L << 28) | ((ubBase & 0xFF).toLong << 20) | ((l2Base & 0xFFFF).toLong << 4)
-  def encDmaWait: Long = 0xAL << 28
+    (0x9L << 28) | ((ubBase & 0xff).toLong << 20) | ((l2Base & 0xffff).toLong << 4)
+  def encDmaWait: Long = 0xaL << 28
   def encMatmul: Long = 0x4L << 28
   def encVecadd: Long = 0x5L << 28
-  def encNop: Long    = 0x0L
-  def encHalt: Long   = 0x1L << 28
+  def encNop: Long = 0x0L
+  def encHalt: Long = 0x1L << 28
 
   def loadProgram(dut: ToyAscendTop, instrs: Seq[Long]): Unit = {
     for ((instr, i) <- instrs.zipWithIndex) {
@@ -118,8 +118,8 @@ class LargeMatmulTest extends AnyFunSpec with ChiselSim {
           encLoad(bufSel = 1, memAddr = 0),
           encLoad(bufSel = 0, memAddr = N),
           encMatmul,
-          encStore(bufSel = 2, memAddr = 2*N),
-          encDmaStore(ubBase = 2*N, l2Base = 2*N),
+          encStore(bufSel = 2, memAddr = 2 * N),
+          encDmaStore(ubBase = 2 * N, l2Base = 2 * N),
           encDmaWait,
           encHalt
         )
@@ -128,28 +128,30 @@ class LargeMatmulTest extends AnyFunSpec with ChiselSim {
         val totalCycles = runToHalt(dut)
 
         // 读取结果
-        val result = Array.tabulate(N)(i => readL2(dut, 2*N + i))
+        val result = Array.tabulate(N)(i => readL2(dut, 2 * N + i))
 
         // 验证结果
         val expected = matmul8x8(a, w)
 
         for (i <- 0 until N; j <- 0 until N) {
-          assert(result(i)(j) == expected(i)(j),
-            s"Mismatch at [$i][$j]: got ${result(i)(j)}, expected ${expected(i)(j)}")
+          assert(
+            result(i)(j) == expected(i)(j),
+            s"Mismatch at [$i][$j]: got ${result(i)(j)}, expected ${expected(i)(j)}"
+          )
         }
 
-        println("\n" + "="*60)
+        println("\n" + "=" * 60)
         println("8×8 矩阵乘法性能测试")
-        println("="*60)
+        println("=" * 60)
         println(f"总周期数:                 $totalCycles%4d")
-        println("="*60)
+        println("=" * 60)
       }
     }
 
     it("16×16 矩阵乘法性能估算") {
-      println("\n" + "="*60)
+      println("\n" + "=" * 60)
       println("16×16 矩阵乘法性能估算")
-      println("="*60)
+      println("=" * 60)
       println("\n基于 8×8 SystolicArray 的 Tiling 分析：")
       println("  - 16×16 矩阵分解为 2×2 个 8×8 块")
       println("  - 每个输出块需要 2 次 MATMUL + 1 次 VECADD")
@@ -173,7 +175,7 @@ class LargeMatmulTest extends AnyFunSpec with ChiselSim {
       println("  ✓ 使用更大的片上缓存，减少 DMA 次数")
       println("  ✓ 流水线优化：DMA 和计算重叠（已实现基础设施）")
       println("  ✓ 多核并行：2 核可以并行处理不同的输出块")
-      println("="*60)
+      println("=" * 60)
     }
   }
 }

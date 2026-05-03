@@ -5,37 +5,37 @@ import chisel3.util._
 
 /** Cube Unit: wraps SystolicArray, handles skewed activation feeding. */
 class CubeUnit(
-    n:  Int = AscendParams.ArraySize,
+    n: Int = AscendParams.ArraySize,
     dw: Int = AscendParams.DataWidth,
     aw: Int = AscendParams.AccWidth
 ) extends Module {
   val io = IO(new Bundle {
-    val start       = Input(Bool())
-    val done        = Output(Bool())
-    val weightData  = Input(Vec(n, Vec(n, SInt(dw.W))))
-    val actData     = Input(Vec(n, Vec(n, SInt(dw.W))))
-    val result      = Output(Vec(n, Vec(n, SInt(aw.W))))
+    val start = Input(Bool())
+    val done = Output(Bool())
+    val weightData = Input(Vec(n, Vec(n, SInt(dw.W))))
+    val actData = Input(Vec(n, Vec(n, SInt(dw.W))))
+    val result = Output(Vec(n, Vec(n, SInt(aw.W))))
     val resultValid = Output(Bool())
     // Debug
-    val dbgFeeding  = Output(Bool())
+    val dbgFeeding = Output(Bool())
   })
 
   val sa = Module(new SystolicArray(n, dw, aw))
 
   val sIdle :: sStartSA :: sWaitSA :: sFeed :: sDrain :: sDone :: Nil = Enum(6)
-  val state   = RegInit(sIdle)
+  val state = RegInit(sIdle)
   val feedCnt = RegInit(0.U(8.W))
   val feedCycles = (2 * n - 1).U
 
   switch(state) {
     is(sIdle) {
       when(io.start) {
-        state   := sStartSA
+        state := sStartSA
         feedCnt := 0.U
       }
     }
     is(sStartSA) { state := sWaitSA }
-    is(sWaitSA)  { state := sFeed }
+    is(sWaitSA) { state := sFeed }
     is(sFeed) {
       feedCnt := feedCnt + 1.U
       when(feedCnt === feedCycles - 1.U) { state := sDrain }
@@ -58,8 +58,8 @@ class CubeUnit(
     sa.io.actIn(k) := Mux(valid, io.actData(idx)(k), 0.S(dw.W))
   }
 
-  io.done        := state === sDone
-  io.dbgFeeding  := state === sFeed
-  io.result      := sa.io.result
+  io.done := state === sDone
+  io.dbgFeeding := state === sFeed
+  io.result := sa.io.result
   io.resultValid := sa.io.resultValid
 }

@@ -5,7 +5,7 @@ import chisel3.util._
 
 /** MTE1: UB -> L1 staging -> L0A/L0B. */
 class Mte1(
-    n:  Int = AscendParams.ArraySize,
+    n: Int = AscendParams.ArraySize,
     dw: Int = AscendParams.DataWidth,
     aw: Int = AscendParams.AccWidth
 ) extends Module {
@@ -22,8 +22,8 @@ class Mte1(
 
     val cubeWrite = Valid(new Bundle {
       val target = UInt(1.W)
-      val row    = UInt(log2Ceil(n).W)
-      val data   = Vec(n, SInt(dw.W))
+      val row = UInt(log2Ceil(n).W)
+      val data = Vec(n, SInt(dw.W))
     })
   })
 
@@ -67,7 +67,11 @@ class Mte1(
     }
     is(sWrite) {
       io.cubeWrite.valid := true.B
-      io.cubeWrite.bits.target := Mux(dstSelReg === BufSel.L0_B, CubeLocalTarget.ACT, CubeLocalTarget.WEIGHT)
+      io.cubeWrite.bits.target := Mux(
+        dstSelReg === BufSel.L0_B,
+        CubeLocalTarget.ACT,
+        CubeLocalTarget.WEIGHT
+      )
       io.cubeWrite.bits.row := rowCnt(log2Ceil(n) - 1, 0)
       io.cubeWrite.bits.data := l1Row
       rowCnt := rowCnt + 1.U
@@ -81,7 +85,7 @@ class Mte1(
 
 /** MTE2: L2/GM-facing path <-> UB. */
 class Mte2(
-    n:  Int = AscendParams.ArraySize,
+    n: Int = AscendParams.ArraySize,
     aw: Int = AscendParams.AccWidth
 ) extends Module {
   val io = IO(new Bundle {
@@ -105,7 +109,8 @@ class Mte2(
     val l2Rdata = Input(Vec(n, SInt(aw.W)))
   })
 
-  val sIdle :: sLoadRd :: sLoadWait :: sLoadWb :: sStoreRd :: sStoreWait :: sStoreWr :: sDone :: Nil = Enum(8)
+  val sIdle :: sLoadRd :: sLoadWait :: sLoadWb :: sStoreRd :: sStoreWait :: sStoreWr :: sDone :: Nil =
+    Enum(8)
   val state = RegInit(sIdle)
   val rowCnt = RegInit(0.U(log2Ceil(n + 1).W))
   val l2BaseReg = RegInit(0.U(AscendParams.L2AddrW.W))
@@ -181,7 +186,7 @@ class Mte2(
 
 /** MTE3: L0C -> UB. */
 class Mte3(
-    n:  Int = AscendParams.ArraySize,
+    n: Int = AscendParams.ArraySize,
     aw: Int = AscendParams.AccWidth
 ) extends Module {
   val io = IO(new Bundle {

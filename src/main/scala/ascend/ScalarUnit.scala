@@ -5,16 +5,16 @@ import chisel3.util._
 
 /** Instruction opcodes. */
 object Opcode {
-  val NOP       = 0x0.U(4.W)
-  val HALT      = 0x1.U(4.W)
-  val LOAD      = 0x2.U(4.W)
-  val STORE     = 0x3.U(4.W)
-  val MATMUL    = 0x4.U(4.W)
-  val VECADD    = 0x5.U(4.W)
-  val RELU      = 0x6.U(4.W)
-  val DMA_LOAD  = 0x8.U(4.W)
+  val NOP = 0x0.U(4.W)
+  val HALT = 0x1.U(4.W)
+  val LOAD = 0x2.U(4.W)
+  val STORE = 0x3.U(4.W)
+  val MATMUL = 0x4.U(4.W)
+  val VECADD = 0x5.U(4.W)
+  val RELU = 0x6.U(4.W)
+  val DMA_LOAD = 0x8.U(4.W)
   val DMA_STORE = 0x9.U(4.W)
-  val DMA_WAIT  = 0xA.U(4.W)
+  val DMA_WAIT = 0xa.U(4.W)
 }
 
 /** Buffer select for LOAD/STORE. Existing encodings are preserved. */
@@ -22,52 +22,52 @@ object BufSel {
   val L0_A = 0.U(2.W)
   val L0_B = 1.U(2.W)
   val L0_C = 2.U(2.W)
-  val VEC  = 3.U(2.W)
+  val VEC = 3.U(2.W)
 }
 
 /** Scalar Unit: instruction fetch, decode, and command dispatch.
   *
-  * The scalar pipeline no longer owns Cube/Vector local data. It issues
-  * commands to the decoupled CubeCore, VectorCore, and MTE engines and waits on their
-  * completion when the ISA requires blocking behavior.
+  * The scalar pipeline no longer owns Cube/Vector local data. It issues commands to the decoupled
+  * CubeCore, VectorCore, and MTE engines and waits on their completion when the ISA requires
+  * blocking behavior.
   */
 class ScalarUnit(
-    n:  Int = AscendParams.ArraySize,
+    n: Int = AscendParams.ArraySize,
     dw: Int = AscendParams.DataWidth,
     aw: Int = AscendParams.AccWidth
 ) extends Module {
   val io = IO(new Bundle {
-    val start  = Input(Bool())
+    val start = Input(Bool())
     val halted = Output(Bool())
 
     val imemAddr = Output(UInt(8.W))
     val imemData = Input(UInt(AscendParams.InstrWidth.W))
 
     val mte1Start = Output(Bool())
-    val mte1Busy  = Input(Bool())
-    val mte1Done  = Input(Bool())
+    val mte1Busy = Input(Bool())
+    val mte1Done = Input(Bool())
     val mte1DstSel = Output(UInt(2.W))
     val mte1UbAddr = Output(UInt(AscendParams.UBAddrW.W))
 
     val mte3Start = Output(Bool())
-    val mte3Done  = Input(Bool())
+    val mte3Done = Input(Bool())
     val mte3UbAddr = Output(UInt(AscendParams.UBAddrW.W))
 
     val cubeStart = Output(Bool())
-    val cubeDone  = Input(Bool())
+    val cubeDone = Input(Bool())
 
     val vectorStart = Output(Bool())
-    val vectorDone  = Input(Bool())
-    val vectorOp    = Output(UInt(2.W))
+    val vectorDone = Input(Bool())
+    val vectorOp = Output(UInt(2.W))
     val vectorSrc1Addr = Output(UInt(AscendParams.UBAddrW.W))
     val vectorSrc2Addr = Output(UInt(AscendParams.UBAddrW.W))
 
-    val dmaQueueEnq    = Output(Bool())
-    val dmaQueueFull   = Input(Bool())
-    val dmaQueueEmpty  = Input(Bool())
-    val dmaEnqIsStore  = Output(Bool())
-    val dmaEnqL2Addr   = Output(UInt(AscendParams.L2AddrW.W))
-    val dmaEnqUbAddr   = Output(UInt(AscendParams.UBAddrW.W))
+    val dmaQueueEnq = Output(Bool())
+    val dmaQueueFull = Input(Bool())
+    val dmaQueueEmpty = Input(Bool())
+    val dmaEnqIsStore = Output(Bool())
+    val dmaEnqL2Addr = Output(UInt(AscendParams.L2AddrW.W))
+    val dmaEnqUbAddr = Output(UInt(AscendParams.UBAddrW.W))
 
     val dbgState = Output(UInt(4.W))
     val dbgOpLat = Output(UInt(4.W))
@@ -79,10 +79,10 @@ class ScalarUnit(
     Enum(12)
 
   val state = RegInit(sIdle)
-  val pc    = RegInit(0.U(8.W))
+  val pc = RegInit(0.U(8.W))
 
-  val opLat      = RegInit(0.U(4.W))
-  val dstSelLat  = RegInit(0.U(2.W))
+  val opLat = RegInit(0.U(4.W))
+  val dstSelLat = RegInit(0.U(2.W))
   val memAddrLat = RegInit(0.U(AscendParams.UBAddrW.W))
   val vecSrc1Lat = RegInit(0.U(AscendParams.UBAddrW.W))
   val vecSrc2Lat = RegInit(0.U(AscendParams.UBAddrW.W))

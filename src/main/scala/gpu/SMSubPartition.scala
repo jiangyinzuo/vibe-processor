@@ -10,8 +10,8 @@ import chisel3.util._
   *   - one dispatch lane group
   *   - one CUDA Core and one SFU per lane in the group
   *
-  * The parent SM still owns resources that are shared across sub-partitions,
-  * such as the register file, shared memory, and global-memory request path.
+  * The parent SM still owns resources that are shared across sub-partitions, such as the register
+  * file, shared memory, and global-memory request path.
   */
 class SMSubPartition(
     partitionId: Int,
@@ -49,6 +49,9 @@ class SMSubPartition(
   val sfus = Array.fill(warpWidth)(Module(new SFU(dw)))
 
   for (w <- 0 until localWarps) {
+    // Stalled warp 正在等待 global memory 返回，不参与本周期调度。
+    // 调度器会在同一个 sub-partition 内寻找其它 Ready warp，这就是本项目
+    // 用来演示 GPU 访存延迟隐藏的最小机制。
     scheduler.io.warpHalted(w) :=
       !io.warpStarted(w) ||
         (io.warpState(w) === WarpState.Halted) ||
@@ -59,8 +62,8 @@ class SMSubPartition(
   val localWarpW = math.max(1, log2Ceil(localWarps))
   val ready = VecInit((0 until localWarps).map { w =>
     io.warpStarted(w) &&
-      io.warpState(w) =/= WarpState.Halted &&
-      io.warpState(w) =/= WarpState.Stalled
+    io.warpState(w) =/= WarpState.Halted &&
+    io.warpState(w) =/= WarpState.Stalled
   })
   val grantIdx = OHToUInt(scheduler.io.grant)
 

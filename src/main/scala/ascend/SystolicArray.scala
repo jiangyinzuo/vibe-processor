@@ -5,26 +5,24 @@ import chisel3.util._
 
 /** Weight-Stationary Systolic Array: C = A * W (NxN matrices).
   *
-  * PE[k][j] stores weight W[k][j].
-  * Activation enters row k from the left, flows right (data).
+  * PE[k][j] stores weight W[k][j]. Activation enters row k from the left, flows right (data).
   * Partial sums flow top-to-bottom (psum).
   *
-  * The caller must provide skewed activations over 2N-1 cycles.
-  * After feeding, the array drains for N more cycles.
-  * C[i][j] appears at the bottom of column j at absolute cycle (i + j + N).
+  * The caller must provide skewed activations over 2N-1 cycles. After feeding, the array drains for
+  * N more cycles. C[i][j] appears at the bottom of column j at absolute cycle (i + j + N).
   */
 class SystolicArray(
-    n:  Int = AscendParams.ArraySize,
+    n: Int = AscendParams.ArraySize,
     dw: Int = AscendParams.DataWidth,
     aw: Int = AscendParams.AccWidth
 ) extends Module {
   val io = IO(new Bundle {
-    val start       = Input(Bool())
-    val done        = Output(Bool())
-    val weightData  = Input(Vec(n, Vec(n, SInt(dw.W))))
-    val actIn       = Input(Vec(n, SInt(dw.W)))
-    val actValid    = Input(Bool())
-    val result      = Output(Vec(n, Vec(n, SInt(aw.W))))
+    val start = Input(Bool())
+    val done = Output(Bool())
+    val weightData = Input(Vec(n, Vec(n, SInt(dw.W))))
+    val actIn = Input(Vec(n, SInt(dw.W)))
+    val actValid = Input(Bool())
+    val result = Output(Vec(n, Vec(n, SInt(aw.W))))
     val resultValid = Output(Bool())
   })
 
@@ -38,11 +36,11 @@ class SystolicArray(
 
   // FSM
   val sIdle :: sLoadWeight :: sCompute :: sDone :: Nil = Enum(4)
-  val state    = RegInit(sIdle)
+  val state = RegInit(sIdle)
   val cycleCnt = RegInit(0.U(8.W))
   val drainCnt = RegInit(0.U(8.W))
 
-  val feedCycles  = (2 * n - 1).U
+  val feedCycles = (2 * n - 1).U
   val drainCycles = n.U
   val feedingDone = cycleCnt === feedCycles
 
@@ -51,7 +49,7 @@ class SystolicArray(
   switch(state) {
     is(sIdle) {
       when(io.start) {
-        state    := sLoadWeight
+        state := sLoadWeight
         cycleCnt := 0.U
         drainCnt := 0.U
       }
@@ -74,7 +72,7 @@ class SystolicArray(
     }
   }
 
-  io.done        := state === sDone
+  io.done := state === sDone
   io.resultValid := state === sDone
 
   // Left side: activation inputs (zero during drain)
@@ -90,16 +88,16 @@ class SystolicArray(
   // Connect PE array
   for (k <- 0 until n; j <- 0 until n) {
     pes(k)(j).io.weightLoad := weightLoad
-    pes(k)(j).io.weightIn   := io.weightData(k)(j)
-    pes(k)(j).io.dataIn     := actH(k)(j)
-    actH(k)(j + 1)          := pes(k)(j).io.dataOut
-    pes(k)(j).io.psumIn     := psumV(k)(j)
-    psumV(k + 1)(j)         := pes(k)(j).io.psumOut
+    pes(k)(j).io.weightIn := io.weightData(k)(j)
+    pes(k)(j).io.dataIn := actH(k)(j)
+    actH(k)(j + 1) := pes(k)(j).io.dataOut
+    pes(k)(j).io.psumIn := psumV(k)(j)
+    psumV(k + 1)(j) := pes(k)(j).io.psumOut
   }
 
   // Result capture
   // C[i][j] appears at psumV(n)(j) at absolute cycle (i + j + n)
-  val absCycle  = Mux(feedingDone, feedCycles + drainCnt, cycleCnt)
+  val absCycle = Mux(feedingDone, feedCycles + drainCnt, cycleCnt)
   val resultReg = RegInit(VecInit.fill(n, n)(0.S(aw.W)))
 
   when(state === sCompute) {

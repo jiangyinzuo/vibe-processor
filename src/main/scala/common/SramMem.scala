@@ -3,9 +3,8 @@ package common
 import chisel3._
 import chisel3.util.log2Ceil
 
-/** Generic dual-port SRAM wrapper around SyncReadMem.
-  * Read port is always active (combinational address, registered output).
-  * Write port is gated by en && we.
+/** Generic dual-port SRAM wrapper around SyncReadMem. Read port is always active (combinational
+  * address, registered output). Write port is gated by en && we.
   */
 class DualPortSram[T <: Data](gen: T, depth: Int, addrW: Int) extends Module {
   val io = IO(new Bundle {
@@ -26,9 +25,9 @@ class DualPortSram[T <: Data](gen: T, depth: Int, addrW: Int) extends Module {
 
 /** Single SRAM port bundle. */
 class SramPort[T <: Data](gen: T, addrW: Int) extends Bundle {
-  val en    = Input(Bool())
-  val we    = Input(Bool())
-  val addr  = Input(UInt(addrW.W))
+  val en = Input(Bool())
+  val we = Input(Bool())
+  val addr = Input(UInt(addrW.W))
   val wdata = Input(gen)
   val rdata = Output(gen)
 }
@@ -36,9 +35,9 @@ class SramPort[T <: Data](gen: T, addrW: Int) extends Bundle {
 /** Single-port SRAM: combinational read, synchronous write. Good for instruction memory. */
 class SinglePortRom(width: Int, depth: Int) extends Module {
   val io = IO(new Bundle {
-    val addr     = Input(UInt(log2Ceil(depth).W))
-    val data     = Output(UInt(width.W))
-    val loadEn   = Input(Bool())
+    val addr = Input(UInt(log2Ceil(depth).W))
+    val data = Output(UInt(width.W))
+    val loadEn = Input(Bool())
     val loadAddr = Input(UInt(log2Ceil(depth).W))
     val loadData = Input(UInt(width.W))
   })

@@ -5,8 +5,8 @@ import chisel3.util._
 
 /** Memory with configurable read latency, simulating off-chip DRAM behavior.
   *
-  * - latency=1: behaves like on-chip SRAM (SyncReadMem equivalent)
-  * - latency=N: request takes N cycles to return data (models DRAM/HBM)
+  *   - latency=1: behaves like on-chip SRAM (SyncReadMem equivalent)
+  *   - latency=N: request takes N cycles to return data (models DRAM/HBM)
   *
   * Interface uses valid/ready handshake:
   *   - Requester asserts req.valid + addr (+ wdata/we for writes)
@@ -16,10 +16,10 @@ import chisel3.util._
   * Writes complete silently (no response needed).
   */
 class LatencyMem[T <: Data](
-    gen:     T,
-    depth:   Int,
+    gen: T,
+    depth: Int,
     latency: Int = 1,
-    addrW:   Int = 16
+    addrW: Int = 16
 ) extends Module {
   require(latency >= 1, "latency must be >= 1")
 
@@ -28,8 +28,8 @@ class LatencyMem[T <: Data](
     val req = new Bundle {
       val valid = Input(Bool())
       val ready = Output(Bool())
-      val we    = Input(Bool())
-      val addr  = Input(UInt(addrW.W))
+      val we = Input(Bool())
+      val addr = Input(UInt(addrW.W))
       val wdata = Input(gen)
     }
     // Response port (read data)
@@ -39,9 +39,9 @@ class LatencyMem[T <: Data](
     }
     // Direct access port (no latency, for test preload/readback)
     val direct = new Bundle {
-      val en    = Input(Bool())
-      val we    = Input(Bool())
-      val addr  = Input(UInt(addrW.W))
+      val en = Input(Bool())
+      val we = Input(Bool())
+      val addr = Input(UInt(addrW.W))
       val wdata = Input(gen)
       val rdata = Output(gen)
     }
@@ -51,7 +51,7 @@ class LatencyMem[T <: Data](
 
   if (latency == 1) {
     // Fast path: single-cycle, always ready
-    io.req.ready  := true.B
+    io.req.ready := true.B
     io.resp.valid := RegNext(io.req.valid && !io.req.we, false.B)
     io.resp.rdata := RegNext(mem.read(io.req.addr))
 
@@ -61,12 +61,12 @@ class LatencyMem[T <: Data](
   } else {
     // Slow path: FSM with counter to model multi-cycle latency
     val sIdle :: sBusy :: Nil = Enum(2)
-    val state   = RegInit(sIdle)
+    val state = RegInit(sIdle)
     val counter = RegInit(0.U(log2Ceil(latency + 1).W))
-    val isRead  = RegInit(false.B)
+    val isRead = RegInit(false.B)
     val rdataReg = Reg(gen)
 
-    io.req.ready  := state === sIdle
+    io.req.ready := state === sIdle
     io.resp.valid := false.B
     io.resp.rdata := rdataReg
 
@@ -79,16 +79,16 @@ class LatencyMem[T <: Data](
           }.otherwise {
             // Reads take `latency` cycles
             rdataReg := mem.read(io.req.addr)
-            isRead   := true.B
-            counter  := (latency - 1).U
-            state    := sBusy
+            isRead := true.B
+            counter := (latency - 1).U
+            state := sBusy
           }
         }
       }
       is(sBusy) {
         when(counter === 0.U) {
           io.resp.valid := true.B
-          state         := sIdle
+          state := sIdle
         }.otherwise {
           counter := counter - 1.U
         }

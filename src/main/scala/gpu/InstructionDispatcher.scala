@@ -5,8 +5,7 @@ import chisel3.util._
 
 /** 指令分发器
   *
-  * 真实 GPU 中，Warp Scheduler 选择就绪的 Warp 后，
-  * Instruction Dispatcher 负责：
+  * 真实 GPU 中，Warp Scheduler 选择就绪的 Warp 后， Instruction Dispatcher 负责：
   *   1. 从指令内存读取指令
   *   2. 解码指令
   *   3. 从寄存器文件读取操作数
@@ -41,74 +40,104 @@ class InstructionDispatcher(
     val imemData = Input(Vec(numWarps, UInt(GpuParams.InstrWidth.W)))
 
     // === 到寄存器文件的读请求 ===
-    val regRdAddr = Output(Vec(rfPorts, new Bundle {
-      val valid  = Bool()
-      val warpId = UInt(log2Ceil(numWarps).W)
-      val laneId = UInt(log2Ceil(warpWidth).W)
-      val rs1    = UInt(4.W)
-      val rs2    = UInt(4.W)
-      val rs3    = UInt(4.W)
-    }))
-    val regRdData = Input(Vec(rfPorts, new Bundle {
-      val rs1 = SInt(32.W)
-      val rs2 = SInt(32.W)
-      val rs3 = SInt(32.W)
-    }))
+    val regRdAddr = Output(
+      Vec(
+        rfPorts,
+        new Bundle {
+          val valid = Bool()
+          val warpId = UInt(log2Ceil(numWarps).W)
+          val laneId = UInt(log2Ceil(warpWidth).W)
+          val rs1 = UInt(4.W)
+          val rs2 = UInt(4.W)
+          val rs3 = UInt(4.W)
+        }
+      )
+    )
+    val regRdData = Input(
+      Vec(
+        rfPorts,
+        new Bundle {
+          val rs1 = SInt(32.W)
+          val rs2 = SInt(32.W)
+          val rs3 = SInt(32.W)
+        }
+      )
+    )
 
     // === 到 CUDA Core 的分发 ===
-    val coreValid  = Output(Vec(numCores, Bool()))
-    val coreOp     = Output(Vec(numCores, UInt(4.W)))
-    val coreRs1    = Output(Vec(numCores, SInt(32.W)))
-    val coreRs2    = Output(Vec(numCores, SInt(32.W)))
-    val coreRs3    = Output(Vec(numCores, SInt(32.W)))
+    val coreValid = Output(Vec(numCores, Bool()))
+    val coreOp = Output(Vec(numCores, UInt(4.W)))
+    val coreRs1 = Output(Vec(numCores, SInt(32.W)))
+    val coreRs2 = Output(Vec(numCores, SInt(32.W)))
+    val coreRs3 = Output(Vec(numCores, SInt(32.W)))
     val coreWarpId = Output(Vec(numCores, UInt(log2Ceil(numWarps).W)))
     val coreLaneId = Output(Vec(numCores, UInt(log2Ceil(warpWidth).W)))
 
     // === 到 SFU 的分发 ===
-    val sfuValid  = Output(Vec(numCores, Bool()))
-    val sfuOp     = Output(Vec(numCores, UInt(4.W)))
-    val sfuRs1    = Output(Vec(numCores, SInt(32.W)))
+    val sfuValid = Output(Vec(numCores, Bool()))
+    val sfuOp = Output(Vec(numCores, UInt(4.W)))
+    val sfuRs1 = Output(Vec(numCores, SInt(32.W)))
     val sfuWarpId = Output(Vec(numCores, UInt(log2Ceil(numWarps).W)))
     val sfuLaneId = Output(Vec(numCores, UInt(log2Ceil(warpWidth).W)))
 
     // === 来自 CUDA Core 的结果 ===
-    val coreDone   = Input(Vec(numCores, Bool()))
-    val coreRd     = Input(Vec(numCores, SInt(32.W)))
+    val coreDone = Input(Vec(numCores, Bool()))
+    val coreRd = Input(Vec(numCores, SInt(32.W)))
 
     // === 来自 SFU 的结果 ===
-    val sfuDone   = Input(Vec(numCores, Bool()))
-    val sfuRd     = Input(Vec(numCores, SInt(32.W)))
+    val sfuDone = Input(Vec(numCores, Bool()))
+    val sfuRd = Input(Vec(numCores, SInt(32.W)))
 
     // === 到寄存器文件的写请求 ===
-    val regWrAddr = Output(Vec(rfPorts, new Bundle {
-      val valid  = Bool()
-      val warpId = UInt(log2Ceil(numWarps).W)
-      val laneId = UInt(log2Ceil(warpWidth).W)
-      val rd     = UInt(4.W)
-    }))
+    val regWrAddr = Output(
+      Vec(
+        rfPorts,
+        new Bundle {
+          val valid = Bool()
+          val warpId = UInt(log2Ceil(numWarps).W)
+          val laneId = UInt(log2Ceil(warpWidth).W)
+          val rd = UInt(4.W)
+        }
+      )
+    )
     val regWrData = Output(Vec(rfPorts, SInt(32.W)))
 
     // === 内存访问接口（LD/ST 指令）===
     val memReq = Output(Valid(new Bundle {
       val warpId = UInt(log2Ceil(numWarps).W)
       val isLoad = Bool()
-      val addr   = UInt(GpuParams.GlobalAddrW.W)
-      val rdReg  = UInt(4.W)
+      val addr = UInt(GpuParams.GlobalAddrW.W)
+      val rdReg = UInt(4.W)
     }))
     val memWdata = Output(Vec(warpWidth, SInt(32.W)))
 
     // === Warp 上下文更新 ===
-    val warpUpdate = Output(Vec(numWarps, new Bundle {
-      val valid     = Bool()
-      val pcInc     = Bool()  // PC++
-      val setState  = Valid(WarpState())
-      val setMemWait = Valid(UInt(8.W))
-      val setMemRd   = Valid(UInt(4.W))
-    }))
+    val warpUpdate = Output(
+      Vec(
+        numWarps,
+        new Bundle {
+          val valid = Bool()
+          val pcInc = Bool() // PC++
+          val setState = Valid(WarpState())
+          val setMemWait = Valid(UInt(8.W))
+          val setMemRd = Valid(UInt(4.W))
+        }
+      )
+    )
 
     // Per-scheduler pipeline backpressure. Each scheduler/sub-partition has
     // its own issue lane, so independent lanes can issue in the same cycle.
     val issueBusy = Output(Vec(numSchedulers, Vec(2, Bool())))
+
+    // Performance events. These are single-cycle pulses used by the SM-level
+    // counters to separate real execution-unit issue from merely having a
+    // ready warp selected by the scheduler.
+    val perf = Output(new Bundle {
+      val aluIssue = Bool()
+      val sfuIssue = Bool()
+      val memIssue = Bool()
+      val dualIssue = Bool()
+    })
   })
 
   // === 默认值 ===
@@ -161,6 +190,10 @@ class InstructionDispatcher(
   io.memReq.bits.addr := 0.U
   io.memReq.bits.rdReg := 0.U
   io.memWdata := VecInit.fill(warpWidth)(0.S)
+  io.perf.aluIssue := false.B
+  io.perf.sfuIssue := false.B
+  io.perf.memIssue := false.B
+  io.perf.dualIssue := false.B
 
   val laneW = log2Ceil(warpWidth)
   val warpW = log2Ceil(numWarps)
@@ -202,9 +235,13 @@ class InstructionDispatcher(
   val memPendingIsLoad = RegInit(VecInit(Seq.fill(numSchedulers)(false.B)))
   val memPendingAddr = RegInit(VecInit(Seq.fill(numSchedulers)(0.U(GpuParams.GlobalAddrW.W))))
   val memPendingRd = RegInit(VecInit(Seq.fill(numSchedulers)(0.U(4.W))))
-  val memPendingWdata = RegInit(VecInit(Seq.fill(numSchedulers)(
-    VecInit(Seq.fill(warpWidth)(0.S(32.W)))
-  )))
+  val memPendingWdata = RegInit(
+    VecInit(
+      Seq.fill(numSchedulers)(
+        VecInit(Seq.fill(warpWidth)(0.S(32.W)))
+      )
+    )
+  )
 
   val aluBusy = Wire(Vec(numSchedulers, Bool()))
   val sfuBusy = Wire(Vec(numSchedulers, Bool()))
@@ -230,14 +267,16 @@ class InstructionDispatcher(
     val warpId = w.U(warpW.W)
     val decodeBusy = VecInit((0 until numSchedulers).map { s =>
       (aluDecodeValidReg(s) && aluDecodeWarpReg(s) === warpId) ||
-        (sfuDecodeValidReg(s) && sfuDecodeWarpReg(s) === warpId)
+      (sfuDecodeValidReg(s) && sfuDecodeWarpReg(s) === warpId)
     }).asUInt.orR
     val rfBusy = VecInit((0 until numSchedulers).map { s =>
       val baseCore = s * warpWidth
       val aluRfBusy =
-        if (baseCore < numCores) aluRfValidReg(s) && aluRfWarpIdReg(baseCore) === warpId else false.B
+        if (baseCore < numCores) aluRfValidReg(s) && aluRfWarpIdReg(baseCore) === warpId
+        else false.B
       val sfuRfBusy =
-        if (baseCore < numCores) sfuRfValidReg(s) && sfuRfWarpIdReg(baseCore) === warpId else false.B
+        if (baseCore < numCores) sfuRfValidReg(s) && sfuRfWarpIdReg(baseCore) === warpId
+        else false.B
       aluRfBusy || sfuRfBusy
     }).asUInt.orR
     val memBusy = VecInit((0 until numSchedulers).map { s =>
@@ -245,7 +284,7 @@ class InstructionDispatcher(
     }).asUInt.orR
     val wbBusy = VecInit((0 until numCores).map { i =>
       (aluWbBusyReg(i) && aluWbWarpIdReg(i) === warpId) ||
-        (sfuWbBusyReg(i) && sfuWbWarpIdReg(i) === warpId)
+      (sfuWbBusyReg(i) && sfuWbWarpIdReg(i) === warpId)
     }).asUInt.orR
     warpInFlight(w) := decodeBusy || rfBusy || memBusy || wbBusy
   }
@@ -589,4 +628,11 @@ class InstructionDispatcher(
       sfuWbBusyReg(i) := false.B
     }
   }
+
+  val aluIssueEvent = io.coreValid.asUInt.orR
+  val sfuIssueEvent = io.sfuValid.asUInt.orR
+  io.perf.aluIssue := aluIssueEvent
+  io.perf.sfuIssue := sfuIssueEvent
+  io.perf.memIssue := io.memReq.valid
+  io.perf.dualIssue := aluIssueEvent && sfuIssueEvent
 }

@@ -9,20 +9,6 @@
 - **DMA-Compute Overlap**: 非阻塞 DMA，流水线优化，实际加速比 1.22×
 - **完整文档**: 架构说明、ISA 定义、性能分析
 
-## 📊 性能亮点
-
-### NPU - DMA-Compute Overlap
-| 指标 | 顺序执行 | 流水线 Overlap | 提升 |
-|------|---------|---------------|------|
-| 总周期数 | 557 | 455 | **-18.3%** |
-| 重叠率 | 0.0% | **24.1%** | **+24.1%** |
-
-### GPU - 共享架构重构
-| 指标 | 原始架构 | 共享架构 | 提升 |
-|------|---------|---------|------|
-| 资源利用率 | 6.25% | 25-100% | **4-16× 提升** |
-| SM 利用率 | N/A | 85.7% | **高效** |
-
 ## 🚀 快速开始
 
 ### 环境要求
@@ -195,6 +181,18 @@ sbt "testOnly gpu.*"
 sbt "testOnly ascend.OverlapBenchmark"
 ```
 
+### 代码格式化
+
+项目使用 `sbt-scalafmt` 固定 Scala/Chisel 格式，配置见 `.scalafmt.conf`。
+
+```bash
+# 格式化 Scala 源码、测试和 build.sbt
+sbt "scalafmtAll; scalafmtSbt"
+
+# CI / 提交前检查格式
+sbt "scalafmtCheckAll; scalafmtSbtCheck"
+```
+
 ### 生成 Verilog
 
 ```bash
@@ -284,7 +282,8 @@ vibe-processor/
 - ✅ **SIMT 架构** - Warp 执行模型
 - ✅ **多 SM** - 4 个 SM，独立调度
 - ✅ **共享 CUDA Core** - SM 级别共享资源（符合真实 GPU 设计）
-- ✅ **双 Warp 调度器** - 支持双发射，2× 性能提升
+- ✅ **双 Warp 调度器** - 通过 Ready/Stalled warp 切换隐藏访存延迟
+- ✅ **GPU 性能计数器** - 统计 eligible/stalled/no-eligible 与 ALU/SFU/MEM issue
 - ✅ **共享寄存器文件** - 多端口访问，高效写回
 - ✅ **全局内存** - 统一地址空间
 
@@ -347,13 +346,6 @@ vibe-processor/
 - 资源利用率优化
 - 性能分析方法
 
-### 工程实践
-
-- Chisel HDL 编程
-- 测试驱动开发
-- 性能测量与分析
-- 技术文档编写
-
 ## 📊 与真实硬件的差距
 
 ### NPU (vs 昇腾 910)
@@ -374,23 +366,3 @@ vibe-processor/
 | 调度器/SM | 2 | 4 | 2× |
 | 架构模型 | ✅ 共享 CUDA Core | ✅ 共享 CUDA Core | **一致** |
 
-## 📝 引用
-
-如果这个项目对你有帮助，欢迎引用：
-
-```
-Vibe Processor - Educational NPU and GPU Implementation
-https://github.com/your-repo/vibe-processor
-```
-
-## 📄 许可证
-
-本项目仅用于教学目的。
-
----
-
-**版本：** v2.0  
-**最后更新：** 2026-05-02  
-**状态：** ✅ 100% 完成  
-**测试通过率：** ✅ 100% (37/37)  
-**性能提升：** ✅ NPU 1.22× 加速比，GPU 4-16× 资源利用率提升
