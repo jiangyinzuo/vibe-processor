@@ -4,12 +4,11 @@ import chisel3._
 import chisel3.simulator.scalatest.ChiselSim
 import org.scalatest.funspec.AnyFunSpec
 
-class MultiCoreTest extends AnyFunSpec with ChiselSim {
+class SpmdTest extends AnyFunSpec with ChiselSim {
 
   val N  = AscendParams.ArraySize
   val AW = AscendParams.AccWidth
-  val NC = AscendParams.NumCores
-  val SLICE = AscendParams.L2SliceSize
+  val BlockStride = 64
 
   def encDmaLoad(ubBase: Int, l2Base: Int): Long =
     (0x8L << 28) | ((ubBase & 0xFF).toLong << 20) | ((l2Base & 0xFFFF).toLong << 4)
@@ -56,9 +55,9 @@ class MultiCoreTest extends AnyFunSpec with ChiselSim {
     result
   }
 
-  def initDut(dut: ToyAscendTop): Unit = {
+  def initDut(dut: ToyAscendTop, blockDim: Int): Unit = {
     dut.io.start.poke(false.B)
-    dut.io.blockDim.poke(0.U)
+    dut.io.blockDim.poke(blockDim.U)
     dut.io.imemLoadEn.poke(false.B)
     dut.io.l2Ext.en.poke(false.B)
     dut.io.l2Ext.we.poke(false.B)
@@ -66,7 +65,7 @@ class MultiCoreTest extends AnyFunSpec with ChiselSim {
     dut.io.hbmExt.we.poke(false.B)
   }
 
-  def runToHalt(dut: ToyAscendTop, maxCycles: Int = 500): Int = {
+  def runToHalt(dut: ToyAscendTop, maxCycles: Int = 1200): Int = {
     dut.io.start.poke(true.B)
     dut.clock.step()
     dut.io.start.poke(false.B)
@@ -80,73 +79,62 @@ class MultiCoreTest extends AnyFunSpec with ChiselSim {
     cycles
   }
 
-  describe("Multi-core NPU") {
+  describe("Ascend SPMD block scheduling") {
+    it("runs blockDim logical blocks on fewer physical cores") {
+      simulate(new ToyAscendTop(numCores = 2, blockStride = BlockStride, hbmLatency = 10)) { dut =>
+        initDut(dut, blockDim = 4)
 
-    it("2 cores each compute MATMUL on different data tiles") {
-      simulate(new ToyAscendTop) { dut =>
-        initDut(dut)
+        val tiles = Array.tabulate(4) { b =>
+          (
+            Array.tabulate(N, N)((i, j) => (b + i + j + 1) % 8),
+            Array.tabulate(N, N)((i, j) => (b * 2 + i + j + 1) % 8)
+          )
+        }
 
-        // Test data: 2 different matrix pairs
-        val tiles = Array(
-          // Tile 0 (core 0): A0, W0
-          (Array.tabulate(N, N)((i, j) => (i + j + 1) % 8),
-           Array.tabulate(N, N)((i, j) => (i * 2 + j) % 8)),
-          // Tile 1 (core 1): A1, W1
-          (Array.tabulate(N, N)((i, j) => (i + j + 2) % 8),
-           Array.tabulate(N, N)((i, j) => (i * 2 + j + 1) % 8))
-        )
-
-        // Preload L2: Core 0 data at L2[0..2N-1], Core 1 data at L2[SLICE..SLICE+2N-1]
-        for (c <- 0 until NC) {
-          val (a, w) = tiles(c)
-          val base = c * SLICE
+        for (b <- tiles.indices) {
+          val (a, w) = tiles(b)
+          val base = b * BlockStride
           for (i <- 0 until N) writeL2(dut, base + i, a(i))
           for (i <- 0 until N) writeL2(dut, base + N + i, w(i))
         }
 
-        // Program (shared, both cores run this):
         val program = Seq(
           encDmaLoad(ubBase = 0, l2Base = 0),
           encDmaLoad(ubBase = N, l2Base = N),
           encDmaWait,
-          encLoad(1, 0),  // L0_B from UB[0]
-          encLoad(0, N),  // L0_A from UB[N]
+          encLoad(1, 0),
+          encLoad(0, N),
           encMatmul,
-          encStore(2, 2*N), // result to UB[2*N]
-          encDmaStore(ubBase = 2*N, l2Base = 2*N),
+          encStore(2, 2 * N),
+          encDmaStore(ubBase = 2 * N, l2Base = 2 * N),
           encDmaWait,
           encHalt
         )
         loadProgram(dut, program)
 
         val cycles = runToHalt(dut)
-        println(s"Multi-core MATMUL: $cycles cycles")
+        println(s"SPMD blockDim=4 on 2 physical cores: $cycles cycles")
 
-        // Verify results from L2
-        for (c <- 0 until NC) {
-          val (a, w) = tiles(c)
+        for (b <- tiles.indices) {
+          val (a, w) = tiles(b)
           val expected = Array.tabulate(N, N)((i, j) =>
             (0 until N).map(k => a(i)(k) * w(k)(j)).sum
           )
-          val base = c * SLICE + 2*N
+          val base = b * BlockStride + 2 * N
 
           for (i <- 0 until N) {
             val row = readL2(dut, base + i)
             for (j <- 0 until N) {
               assert(row(j) == expected(i)(j),
-                s"Core $c, C[$i][$j]: got ${row(j)}, expected ${expected(i)(j)}")
+                s"Block $b, C[$i][$j]: got ${row(j)}, expected ${expected(i)(j)}")
             }
           }
-          println(s"  Core $c result verified OK")
         }
 
-        // Print per-core perf
-        for (c <- 0 until NC) {
-          val total = dut.io.perf(c).totalCycles.peek().litValue.toLong
-          val dmaT  = dut.io.perf(c).dmaTotalCycles.peek().litValue.toLong
-          val cubeT = dut.io.perf(c).cubeTotalCycles.peek().litValue.toLong
-          println(s"  Core $c: total=$total, dma=$dmaT, cube=$cubeT")
-        }
+        val starts = (0 until 2).map(c => dut.io.perf(c).blockStarts.peek().litValue.toInt).sum
+        val completions = (0 until 2).map(c => dut.io.perf(c).blockCompletions.peek().litValue.toInt).sum
+        assert(starts == 4, s"expected 4 SPMD block starts, got $starts")
+        assert(completions == 4, s"expected 4 SPMD block completions, got $completions")
       }
     }
   }

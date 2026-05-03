@@ -17,11 +17,19 @@ class SM(
     warpWidth:   Int = 8,
     numCores:    Int = 16,
     dw:          Int = GpuParams.DataWidth,
-    memLatency:  Int = 1
+    memLatency:  Int = 1,
+    maxCTAsPerSM: Int = GpuParams.MaxCTAsPerSM,
+    warpsPerCTA: Int = GpuParams.WarpsPerCTA
 ) extends Module {
   val io = IO(new Bundle {
     val start     = Input(Bool())
     val allHalted = Output(Bool())
+
+    // Resident CTA slots inside this SM.
+    val ctaLaunch = Input(Vec(maxCTAsPerSM, Valid(UInt(GpuParams.CTAIdWidth.W))))
+    val ctaDone   = Output(Vec(maxCTAsPerSM, Valid(UInt(GpuParams.CTAIdWidth.W))))
+    val ctaActive = Output(Vec(maxCTAsPerSM, Bool()))
+    val ctaId     = Output(Vec(maxCTAsPerSM, UInt(GpuParams.CTAIdWidth.W)))
 
     // 指令内存（每个 Warp 一个端口）
     val imemAddr  = Output(Vec(numWarps, UInt(8.W)))
@@ -42,6 +50,9 @@ class SM(
   })
 
   require(numWarps == 4, "Currently only supports 4 warps")
+  require(maxCTAsPerSM > 1, "SM should model multiple resident CTAs")
+  require(warpsPerCTA > 0, "warpsPerCTA must be positive")
+  require(numWarps == maxCTAsPerSM * warpsPerCTA, "numWarps must equal maxCTAsPerSM * warpsPerCTA")
   require(warpWidth == 4 || warpWidth == 8, s"Currently only supports warp width of 4 or 8, got $warpWidth")
   require(numCores == 16 || numCores == 8, s"Currently only supports 8 or 16 CUDA cores, got $numCores")
 
@@ -58,6 +69,17 @@ class SM(
 
   // === Warp 上下文（轻量级）===
   val warpContexts = RegInit(VecInit.fill(numWarps)(WarpContext.init(warpWidth, dw)))
+  val fullActiveMask = ((BigInt(1) << warpWidth) - 1).U(8.W)
+
+  // === CTA / thread block residency ===
+  val ctaActive = RegInit(VecInit.fill(maxCTAsPerSM)(false.B))
+  val ctaIds = RegInit(VecInit.fill(maxCTAsPerSM)(0.U(GpuParams.CTAIdWidth.W)))
+
+  for (w <- 0 until numWarps) {
+    regFile.io.initWarp(w) := false.B
+    regFile.io.initBlockId(w) := 0.U
+    regFile.io.initWarpIdxInCTA(w) := 0.U
+  }
 
   // === SM sub-partitions ===
   val subPartitions = Array.tabulate(numSubPartitions) { p =>
@@ -71,7 +93,7 @@ class SM(
   memWbWarpId := 0.U
 
   for (i <- 0 until numWarps) {
-    when(warpContexts(i).state === WarpState.Stalled && warpContexts(i).memWaitCounter === 0.U) {
+    when(warpContexts(i).started && warpContexts(i).state === WarpState.Stalled && warpContexts(i).memWaitCounter === 0.U) {
       hasMemWb := true.B
       memWbWarpId := i.U
     }
@@ -91,7 +113,7 @@ class SM(
       val warpId = p * warpsPerSubPartition + w
       subPartition.io.warpState(w) := warpContexts(warpId).state
       subPartition.io.warpStarted(w) := warpContexts(warpId).started
-      io.dbgGrant(warpId) := subPartition.io.grant(w)
+      io.dbgGrant(warpId) := subPartition.io.grant(w) && warpContexts(warpId).started
     }
 
     for (lane <- 0 until warpWidth) {
@@ -148,14 +170,23 @@ class SM(
     }
   }
 
-  // === Warp 上下文更新 ===
-  // 启动信号
-  when(io.start) {
-    for (i <- 0 until numWarps) {
-      warpContexts(i).started := true.B
-    }
+  // === CTA 完成检测 ===
+  val ctaDoneVec = Wire(Vec(maxCTAsPerSM, Bool()))
+  for (slot <- 0 until maxCTAsPerSM) {
+    val baseWarp = slot * warpsPerCTA
+    ctaDoneVec(slot) :=
+      ctaActive(slot) &&
+        VecInit((0 until warpsPerCTA).map { w =>
+          warpContexts(baseWarp + w).state === WarpState.Halted
+        }).asUInt.andR
+
+    io.ctaDone(slot).valid := ctaDoneVec(slot)
+    io.ctaDone(slot).bits := ctaIds(slot)
+    io.ctaActive(slot) := ctaActive(slot)
+    io.ctaId(slot) := ctaIds(slot)
   }
 
+  // === Warp 上下文更新 ===
   // 来自分发器的更新
   for (i <- 0 until numWarps) {
     when(dispatcher.io.warpUpdate(i).valid) {
@@ -179,7 +210,7 @@ class SM(
   // 内存数据写回：使用寄存器文件的前 warpWidth 个端口
   // 由于 hasMemWb 会阻止 dispatcher 发射新指令，所以不会有写端口冲突
   for (i <- 0 until numWarps) {
-    when(warpContexts(i).state === WarpState.Stalled) {
+    when(warpContexts(i).started && warpContexts(i).state === WarpState.Stalled) {
       when(warpContexts(i).memWaitCounter === 0.U) {
         // 内存访问完成，写回数据到寄存器文件
         for (lane <- 0 until warpWidth) {
@@ -198,28 +229,83 @@ class SM(
     }
   }
 
-  // === 所有 Warp 是否都已停止 ===
-  io.allHalted := VecInit(warpContexts.map(_.state === WarpState.Halted)).asUInt.andR
+  // === Grid start / CTA slot launch / CTA completion ===
+  when(io.start) {
+    for (slot <- 0 until maxCTAsPerSM) {
+      ctaActive(slot) := false.B
+      ctaIds(slot) := 0.U
+    }
+    for (w <- 0 until numWarps) {
+      warpContexts(w) := WarpContext.init(warpWidth, dw)
+    }
+  }
+
+  for (slot <- 0 until maxCTAsPerSM) {
+    when(ctaDoneVec(slot)) {
+      ctaActive(slot) := false.B
+      for (localWarp <- 0 until warpsPerCTA) {
+        val warpId = slot * warpsPerCTA + localWarp
+        warpContexts(warpId).started := false.B
+      }
+    }
+  }
+
+  for (slot <- 0 until maxCTAsPerSM) {
+    when(io.ctaLaunch(slot).valid) {
+      ctaActive(slot) := true.B
+      ctaIds(slot) := io.ctaLaunch(slot).bits
+
+      for (localWarp <- 0 until warpsPerCTA) {
+        val warpId = slot * warpsPerCTA + localWarp
+
+        warpContexts(warpId).started := true.B
+        warpContexts(warpId).pc := 0.U
+        warpContexts(warpId).state := WarpState.Ready
+        warpContexts(warpId).activeMask := fullActiveMask
+        warpContexts(warpId).ctaId := io.ctaLaunch(slot).bits
+        warpContexts(warpId).memWaitCounter := 0.U
+        warpContexts(warpId).memRdReg := 0.U
+        warpContexts(warpId).memRdData := VecInit(Seq.fill(warpWidth)(0.S(dw.W)))
+
+        regFile.io.initWarp(warpId) := true.B
+        regFile.io.initBlockId(warpId) := io.ctaLaunch(slot).bits
+        regFile.io.initWarpIdxInCTA(warpId) := localWarp.U
+      }
+    }
+  }
+
+  // === 所有 CTA slot 是否都已空闲 ===
+  io.allHalted := !ctaActive.asUInt.orR
 
   // === 性能计数器 ===
   val totalCycles = RegInit(0.U(32.W))
   val activeWarpCycles = RegInit(0.U(32.W))
   val gmemReads = RegInit(0.U(16.W))
   val gmemWrites = RegInit(0.U(16.W))
+  val ctaLaunches = RegInit(0.U(16.W))
+  val ctaCompletions = RegInit(0.U(16.W))
+  val activeCTACycles = RegInit(0.U(32.W))
+  val smHasActiveCTA = ctaActive.asUInt.orR
+  val ctaLaunchCount = PopCount(io.ctaLaunch.map(_.valid))
+  val ctaCompletionCount = PopCount(ctaDoneVec)
 
   when(io.start) {
     totalCycles := 0.U
     activeWarpCycles := 0.U
     gmemReads := 0.U
     gmemWrites := 0.U
-  }.elsewhen(!io.allHalted) {
+    ctaLaunches := ctaLaunchCount
+    ctaCompletions := 0.U
+    activeCTACycles := 0.U
+  }.elsewhen(smHasActiveCTA) {
     totalCycles := totalCycles + 1.U
 
     // 统计活跃的 Warp 数量
     val activeWarps = PopCount(VecInit(warpContexts.map(w =>
-      w.state === WarpState.Ready || w.state === WarpState.Stalled
+      w.started && (w.state === WarpState.Ready || w.state === WarpState.Stalled)
     )))
     activeWarpCycles := activeWarpCycles + activeWarps
+    activeCTACycles := activeCTACycles + PopCount(ctaActive)
 
     // 统计内存访问
     when(io.gmemEn) {
@@ -230,9 +316,16 @@ class SM(
       }
     }
   }
+  when(!io.start) {
+    ctaLaunches := ctaLaunches + ctaLaunchCount
+    ctaCompletions := ctaCompletions + ctaCompletionCount
+  }
 
   io.perf.totalCycles := totalCycles
   io.perf.activeWarpCycles := activeWarpCycles
   io.perf.gmemReads := gmemReads
   io.perf.gmemWrites := gmemWrites
+  io.perf.ctaLaunches := ctaLaunches
+  io.perf.ctaCompletions := ctaCompletions
+  io.perf.activeCTACycles := activeCTACycles
 }

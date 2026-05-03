@@ -7,7 +7,7 @@ connection: {
 }
 
 title: |md
-  # 昇腾 NPU — 多核架构 (2×AiCore)
+  # 昇腾 NPU — Control CPU + AI CPU + 多核 AiCore
 | {
   near: top-center
   style.font-size: 20
@@ -61,6 +61,37 @@ imem: InstrMem\n共享 256×32b {
     stroke: ${border-color}
     stroke-width: 2
     font-size: 13
+  }
+}
+
+controlCpu: "Control CPU\nDevice 控制核\nSPMD Scheduler" {
+  shape: rectangle
+  style: {
+    fill: ${ctrl-color}
+    stroke: ${border-color}
+    stroke-width: 3
+    font-size: 14
+    bold: true
+    shadow: true
+  }
+  sched: "SpmdBlockScheduler\nblockDim → blockIdx" {
+    style: {
+      fill: "#CFD8DC"
+      stroke: ${border-color}
+      stroke-width: 2
+      font-size: 12
+    }
+  }
+}
+
+aiCpu: "AI CPU\nDevice 辅助执行\nL2 Row Tasks" {
+  shape: rectangle
+  style: {
+    fill: "#CFD8DC"
+    stroke: ${border-color}
+    stroke-width: 2
+    font-size: 13
+    bold: true
   }
 }
 
@@ -224,6 +255,29 @@ imem -> core1.scalar: instr {
     stroke: "#1976D2"
     stroke-width: 2
     stroke-dash: 3
+  }
+}
+
+controlCpu.sched -> core0: "launch blockIdx" {
+  style: {
+    stroke: "#455A64"
+    stroke-width: 2
+    font-size: 11
+  }
+}
+controlCpu.sched -> core1: "launch blockIdx" {
+  style: {
+    stroke: "#455A64"
+    stroke-width: 2
+    font-size: 11
+  }
+}
+
+aiCpu -> L2: "CPU类任务" {
+  style: {
+    stroke: "#546E7A"
+    stroke-width: 2
+    font-size: 11
   }
 }
 

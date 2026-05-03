@@ -1,0 +1,10 @@
+module,arch,corner,critical_path_ns,fmax_mhz,worst_slack_ns
+AiCore,npu,sky130_ss_100C_1v60,287.178,3.48,712.54
+ControlCpu,npu,sky130_ss_100C_1v60,14.544,68.76,985.15
+CubeCore,npu,sky130_ss_100C_1v60,301.183,3.32,698.53
+CudaCore,gpu,sky130_ss_100C_1v60,25.539,39.16,974.27
+InstructionDispatcher,gpu,sky130_ss_100C_1v60,19.014,52.59,980.81
+Mte2,npu,sky130_ss_100C_1v60,19.342,51.70,980.66
+ScalarUnit,npu,sky130_ss_100C_1v60,7.705,129.79,992.30
+SystolicArray,npu,sky130_ss_100C_1v60,60.431,16.55,939.43
+VectorCore,npu,sky130_ss_100C_1v60,28.141,35.54,971.51

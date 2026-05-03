@@ -2,7 +2,7 @@
 
 ## 概述
 
-玩具版英伟达 GPU：4×SM，共享 CUDA Core 架构 + Warp 调度 + 可配置存储延迟
+玩具版英伟达 GPU：Grid/CTA/Warp 层次 + 4×SM，共享 CUDA Core 架构 + Warp 调度 + 可配置存储延迟
 
 使用 Chisel 7 (Scala) 编写，Verilator (via svsim) 仿真，ScalaTest 验证。
 
@@ -14,15 +14,67 @@
 
 ![GPU 架构图](../diagrams/gpu_architecture.svg)
 
-- 4 个 SM 并行执行相同程序
-- 每个 SM 内 4 个轻量级 WarpContext (每 Warp 4 线程)
+- 4 个 SM 并行执行同一个 kernel grid
+- 顶层 `CTAScheduler` 将 grid 中的 CTA/thread block 分配到 SM 的 resident CTA slot
+- 默认 grid 有 8 个 CTA；每个 SM 有 2 个 resident CTA slot (`MaxCTAsPerSM = 2`)
+- 每个 CTA 包含 2 个 Warp；每个 Warp 4 条 lane，因此每个 CTA 有 8 个线程
+- 每个 SM 内仍保留 4 个轻量级 WarpContext，即 2 CTA × 2 Warp/CTA
 - 每个 SM 显式拆成 2 个 SMSubPartition，每个分区管理 2 个 WarpContext、1 个 WarpScheduler 和 1 组 lane 执行单元
 - SharedRegisterFile、SharedMem 和访存请求路径仍是 SM 级共享资源，不再保留每 Warp 独占执行单元的旧实现
 - 共享 GlobalMem 和 InstrMem，每个 SM 有私有 SharedMem
 
 ---
 
-## 2. SIMT 执行模型
+## 2. CTA / Thread Block 层
+
+真实 CUDA 程序使用 `threadIdx`、`blockIdx`、`blockDim`、`gridDim` 这些 device-only built-in variables 获取线程块和线程坐标。NVIDIA CUDA Programming Guide 中说明：线程先组织成 thread block，再组织成 grid；kernel 内可以查询 `blockIdx` 和 `threadIdx`，常见线性下标是 `threadIdx.x + blockIdx.x * blockDim.x`。参考：[CUDA SIMT thread hierarchy](https://docs.nvidia.cn/cuda/cuda-programming-guide/02-basics/writing-cuda-kernels.html#thread-hierarchy) 和 [Built-in Variables](https://docs.nvidia.cn/cuda/cuda-programming-guide/05-appendices/cpp-language-extensions.html#built-in-variables)。
+
+本项目实现的是 1D 简化版本：
+
+| 参数 | 默认值 | 含义 |
+|------|--------|------|
+| `NumCTAs` | 8 | grid 中的 CTA/thread block 数 |
+| `MaxCTAsPerSM` | 2 | 每个 SM 同时驻留的 CTA 数 |
+| `WarpsPerCTA` | 2 | 每个 CTA 的 Warp 数 |
+| `WarpWidth` | 4 | 每个 Warp 的 lane/thread 数 |
+| `ThreadsPerCTA` | 8 | 每个 CTA 的线程数 |
+
+执行流程：
+
+1. `ToyGpuTop.io.start` 拉高时，`CTAScheduler` 从 CTA 0 开始分配。
+2. 每个 SM 暴露 2 个 resident CTA slot；空 slot 会被填入一个 CTA ID。
+3. 一个 CTA slot 固定拥有 2 个物理 WarpContext。
+4. 该 CTA 的所有 Warp 执行到 `HALT` 后，SM 上报 `ctaDone`。
+5. `CTAScheduler` 继续把后续 CTA 分配到空 slot，直到所有 CTA 完成。
+
+### 特殊寄存器约定
+
+真实 GPU 中这些坐标由编译器/硬件通过内建变量和特殊寄存器路径提供；本项目用保留寄存器显式暴露给玩具 ISA：
+
+| 寄存器 | 含义 |
+|--------|------|
+| `R12` | `threadIdx.x`，CTA 内线程号 |
+| `R13` | `warpIdxInCTA`，CTA 内 Warp 号 |
+| `R14` | `blockIdx.x` / CTA ID |
+| `R15` | 固定为 0，保持旧测试中零基址用法 |
+
+示例：计算 1D 全局线程号。
+
+```asm
+LD   R0, [R15 + 0]     ; R0 = blockDim.x，本项目测试中预置为 8
+MUL  R1, R14, R0       ; R1 = blockIdx.x * blockDim.x
+ADD  R2, R1, R12       ; R2 = global thread id
+```
+
+当前限制：
+
+- 只实现 1D `threadIdx.x` / `blockIdx.x`。
+- `blockDim.x` 还不是硬件特殊寄存器，示例测试通过 GlobalMem 常量加载。
+- 尚未实现 CTA 级 barrier、每 CTA shared memory 分区、block-level synchronization。
+
+---
+
+## 3. SIMT 执行模型
 
 - **WarpContext** = 4 条 lane（线程）的轻量级执行上下文，保存 PC/状态/访存等待信息
 - **SMSubPartition**：每个分区包含 1 个 WarpScheduler、4 个 CudaCore、4 个 SFU
@@ -97,7 +149,7 @@ scheduler.io.warpHalted(w) :=
 
 ---
 
-## 3. 存储层次
+## 4. 存储层次
 
 | 层级 | 类型 | 深度 | 延迟 | 共享范围 |
 |------|------|------|------|----------|
@@ -107,7 +159,7 @@ scheduler.io.warpHalted(w) :=
 
 ---
 
-## 4. 指令集 (9 条)
+## 5. 指令集 (9 条)
 
 详见 [isa.md](../isa.md#gpu-指令集)
 
@@ -127,7 +179,7 @@ scheduler.io.warpHalted(w) :=
 
 ---
 
-## 5. 性能数据
+## 6. 性能数据
 
 ### 向量加法 (latency=1)
 
@@ -136,9 +188,9 @@ scheduler.io.warpHalted(w) :=
 4 SM 并行
 
 性能：
-  总周期：10
-  活跃 Warp 周期：10
-  Warp 利用率：25.0%
+  总周期：39
+  活跃 Warp 周期：38
+  说明：默认每 SM 执行 2 个 resident CTA，共 4 个 resident Warp
 ```
 
 ### 向量加法 (latency=10)
@@ -148,10 +200,17 @@ scheduler.io.warpHalted(w) :=
 4 SM 并行
 
 性能：
-  总周期：28
-  活跃 Warp 周期：20
-  Warp 利用率：14.7%
+  总周期：50
   延迟隐藏效果：显著
+```
+
+### CTA/thread/block ID 验证
+
+```
+测试：1 SM，4 CTA，MaxCTAsPerSM=2，WarpsPerCTA=2
+程序：读取 R12/R14，计算 blockIdx.x * blockDim.x + threadIdx.x，并写回 GlobalMem
+结果：83 cycles，ctaLaunches=4，ctaCompletions=4
+验证：每个 CTA 写回 threadIdx=[0,1,2,3] 和 [4,5,6,7]，blockIdx 与 CTA ID 一致
 ```
 
 ### 双调度器性能提升
@@ -164,7 +223,7 @@ scheduler.io.warpHalted(w) :=
 
 ---
 
-## 6. 与真实 GPU 的对比
+## 7. 与真实 GPU 的对比
 
 详见 [warp_scheduling.md](warp_scheduling.md#与真实-gpu-对比)
 
@@ -173,6 +232,8 @@ scheduler.io.warpHalted(w) :=
 | **Scheduler 数量** | 2 个 | 4 个 | 2× |
 | **每周期指令** | 2 条 | 4 条 | 2× |
 | **每 SM Warp 数** | 4 个 | 64 个 | 16× |
+| **每 SM resident CTA** | 2 个 | 受架构和资源限制，常见上限 16-32 个 | 8-16× |
+| **线程/Block 坐标** | R12/R14 特殊寄存器约定 | `threadIdx` / `blockIdx` built-in variables | 只实现 1D |
 | **执行单元** | 共享 CudaCore | 分区 + 多类型单元 | - |
 | **调度策略** | Round-Robin | Round-Robin + 优先级 | - |
 
@@ -180,7 +241,7 @@ scheduler.io.warpHalted(w) :=
 
 ---
 
-## 7. 测试
+## 8. 测试
 
 ```bash
 # GPU 单元测试
@@ -198,11 +259,12 @@ sbt "testOnly gpu.*"
 
 ---
 
-## 8. 源代码
+## 9. 源代码
 
 ```
 src/main/scala/gpu/
 ├── GpuParams.scala         # GPU 参数配置
+├── CTAScheduler.scala      # Grid CTA/thread-block 调度器
 ├── CudaCore.scala          # CUDA Core (ADD/MUL/MAD)
 ├── SFU.scala               # Special Function Unit (EXP)
 ├── SMSubPartition.scala    # SM 内部分区：scheduler + lane 执行单元

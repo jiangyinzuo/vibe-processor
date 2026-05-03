@@ -13,6 +13,9 @@ import chisel3.util._
 class ToyGpuTop(
     numSMs:      Int = GpuParams.NumSMs,
     numWarps:    Int = GpuParams.NumWarps,
+    maxCTAsPerSM: Int = GpuParams.MaxCTAsPerSM,
+    warpsPerCTA: Int = GpuParams.WarpsPerCTA,
+    numCTAs:     Int = -1,
     warpWidth:   Int = GpuParams.WarpWidth,
     dw:          Int = GpuParams.DataWidth,
     gmemLatency: Int = 10,
@@ -35,6 +38,11 @@ class ToyGpuTop(
     val perf = Output(Vec(numSMs, new GpuPerfCounters))
   })
 
+  private val gridCTAs = if (numCTAs < 0) numSMs * maxCTAsPerSM else numCTAs
+  require(maxCTAsPerSM > 1, "ToyGpuTop should model multiple resident CTAs per SM")
+  require(warpsPerCTA > 0, "warpsPerCTA must be positive")
+  require(numWarps == maxCTAsPerSM * warpsPerCTA, "numWarps must equal maxCTAsPerSM * warpsPerCTA")
+
   // Shared instruction memory
   val imem = Mem(GpuParams.IMEMDepth, UInt(GpuParams.InstrWidth.W))
   when(io.imemLoadEn) { imem.write(io.imemLoadAddr, io.imemLoadData) }
@@ -53,14 +61,26 @@ class ToyGpuTop(
   // CUDA Core 数量 = 2 × warpWidth（支持双调度器并发）
   // 利用率 80-95%，相比旧架构（per-Warp）节省 50% 硬件资源
   val numCores = 2 * warpWidth  // 4 线程 → 8 cores, 8 线程 → 16 cores
-  val sms = Array.fill(numSMs)(Module(new SM(numWarps, warpWidth, numCores, dw, memLatency = gmemLatency)))
+  val ctaScheduler = Module(new CTAScheduler(numSMs, maxCTAsPerSM, gridCTAs))
+  val sms = Array.fill(numSMs)(Module(new SM(
+    numWarps,
+    warpWidth,
+    numCores,
+    dw,
+    memLatency = gmemLatency,
+    maxCTAsPerSM = maxCTAsPerSM,
+    warpsPerCTA = warpsPerCTA
+  )))
 
-  val smHalted = VecInit(sms.map(_.io.allHalted))
-  io.allHalted := smHalted.asUInt.andR
+  ctaScheduler.io.start := io.start
+  io.allHalted := ctaScheduler.io.allDone
 
   for (i <- 0 until numSMs) {
     val sm = sms(i)
     sm.io.start := io.start
+    sm.io.ctaLaunch := ctaScheduler.io.ctaLaunch(i)
+    ctaScheduler.io.slotActive(i) := sm.io.ctaActive
+    ctaScheduler.io.ctaDone(i) := sm.io.ctaDone
 
     // Shared instruction memory (all SMs read same program)
     for (w <- 0 until numWarps) {
@@ -80,14 +100,24 @@ class ToyGpuTop(
     val perf = RegInit(0.U.asTypeOf(new GpuPerfCounters))
     io.perf(i) := perf
 
-    val running = RegInit(false.B)
-    when(io.start)              { running := true.B }
-    when(sms(i).io.allHalted)   { running := false.B }
+    val activeCTAs = PopCount(sms(i).io.ctaActive)
+    val ctaLaunches = PopCount(ctaScheduler.io.ctaLaunch(i).map(_.valid))
+    val ctaCompletions = PopCount(sms(i).io.ctaDone.map(_.valid))
 
-    when(running && !sms(i).io.allHalted) {
-      perf.totalCycles := perf.totalCycles + 1.U
+    when(io.start) {
+      perf := 0.U.asTypeOf(new GpuPerfCounters)
+      perf.ctaLaunches := ctaLaunches
+      perf.ctaCompletions := ctaCompletions
+    }.otherwise {
+      perf.ctaLaunches := perf.ctaLaunches + ctaLaunches
+      perf.ctaCompletions := perf.ctaCompletions + ctaCompletions
     }
-    when(running) {
+
+    when(activeCTAs =/= 0.U) {
+      perf.totalCycles := perf.totalCycles + 1.U
+      perf.activeCTACycles := perf.activeCTACycles + activeCTAs
+    }
+    when(activeCTAs =/= 0.U) {
       for (w <- 0 until numWarps) {
         when(sms(i).io.dbgGrant(w)) {
           perf.activeWarpCycles := perf.activeWarpCycles + 1.U
@@ -104,4 +134,7 @@ class GpuPerfCounters extends Bundle {
   val activeWarpCycles = UInt(32.W)
   val gmemReads        = UInt(16.W)
   val gmemWrites       = UInt(16.W)
+  val ctaLaunches      = UInt(16.W)
+  val ctaCompletions   = UInt(16.W)
+  val activeCTACycles  = UInt(32.W)
 }

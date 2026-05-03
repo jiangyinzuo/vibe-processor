@@ -9,7 +9,11 @@ import common.LatencyMem
   * Storage hierarchy:
   *   HBM (off-chip) ──ext preload──► L2Buffer (shared) ──DMA──► UB (per-core) ──► Compute
   *
+  * The top-level ControlCpu models the device-side task/control plane. It owns
+  * SPMD block dispatch and launches physical AiCores as execution slots.
+  *
   * @param numCores   Number of AI Cores (default 2).
+  * @param blockStride L2 row stride between SPMD logical blocks.
   * @param hbmLatency HBM read latency in cycles.
   */
 class ToyAscendTop(
@@ -17,10 +21,12 @@ class ToyAscendTop(
     dw:         Int = AscendParams.DataWidth,
     aw:         Int = AscendParams.AccWidth,
     numCores:   Int = AscendParams.NumCores,
+    blockStride: Int = AscendParams.L2SliceSize,
     hbmLatency: Int = AscendParams.HBMLatency
 ) extends Module {
   val io = IO(new Bundle {
     val start  = Input(Bool())
+    val blockDim = Input(UInt(AscendParams.BlockDimWidth.W))
     val halted = Output(Bool())  // true when ALL cores halted
     // Instruction memory preload
     val imemLoadEn   = Input(Bool())
@@ -44,13 +50,22 @@ class ToyAscendTop(
     }
     // Per-core performance counters
     val perf = Output(Vec(numCores, new PerfCounters))
+    val dbgCoreActive = Output(Vec(numCores, Bool()))
+    val dbgBlockIdx = Output(Vec(numCores, UInt(AscendParams.BlockDimWidth.W)))
+    val dbgControlCpuRunning = Output(Bool())
+    val dbgControlCpuNextBlock = Output(UInt(AscendParams.BlockDimWidth.W))
+    val dbgControlCpuCompletedBlocks = Output(UInt(AscendParams.BlockDimWidth.W))
+    val dbgAiCpuBusy = Output(Bool())
+    val dbgAiCpuDone = Output(Bool())
   })
 
   // === Shared Instruction Memory ===
-  val imem = Module(new InstrMem)
-  imem.io.loadEn   := io.imemLoadEn
-  imem.io.loadAddr := io.imemLoadAddr
-  imem.io.loadData := io.imemLoadData
+  // Combinational multi-read model so physical cores can execute different
+  // logical SPMD blocks without staying in PC lockstep.
+  val imem = Mem(AscendParams.IMEMDepth, UInt(AscendParams.InstrWidth.W))
+  when(io.imemLoadEn) {
+    imem.write(io.imemLoadAddr, io.imemLoadData)
+  }
 
   // === HBM (off-chip, with latency) ===
   val hbm = Module(new LatencyMem(
@@ -79,24 +94,46 @@ class ToyAscendTop(
     l2.write(io.l2Ext.addr, io.l2Ext.wdata)
   }
 
+  // === AI CPU auxiliary engine ===
+  // The toy top instantiates the device-side AI CPU block explicitly. Its task
+  // input is tied off for now; standalone tests exercise the engine directly.
+  val aiCpu = Module(new AiCpu(n, aw))
+  aiCpu.io.cmd.valid := false.B
+  aiCpu.io.cmd.bits := 0.U.asTypeOf(new AiCpuCommand)
+  aiCpu.io.l2Rdata := l2.read(aiCpu.io.l2Addr)
+  when(aiCpu.io.l2En && aiCpu.io.l2We) {
+    l2.write(aiCpu.io.l2Addr, aiCpu.io.l2Wdata)
+  }
+  io.dbgAiCpuBusy := aiCpu.io.busy
+  io.dbgAiCpuDone := aiCpu.io.done
+
   // === AI Cores ===
-  val cores = Array.tabulate(numCores)(i => Module(new AiCore(n, dw, aw, coreId = i)))
+  val controlCpu = Module(new ControlCpu(numCores))
+  val cores = Array.tabulate(numCores)(i => Module(new AiCore(n, dw, aw, coreId = i, blockStride = blockStride)))
   val ubs   = Array.fill(numCores)(Module(new UnifiedBuffer(n, aw, depth = AscendParams.UBDepth)))
 
-  val coreHalted = VecInit(cores.map(_.io.halted))
-  io.halted := coreHalted.asUInt.andR
+  controlCpu.io.start := io.start
+  controlCpu.io.blockDim := io.blockDim
+  for (i <- 0 until numCores) {
+    controlCpu.io.coreHalted(i) := cores(i).io.halted
+  }
+
+  io.halted := controlCpu.io.halted
+  io.dbgCoreActive := controlCpu.io.coreActive
+  io.dbgBlockIdx := controlCpu.io.coreBlockIdx
+  io.dbgControlCpuRunning := controlCpu.io.dbgRunning
+  io.dbgControlCpuNextBlock := controlCpu.io.dbgNextBlock
+  io.dbgControlCpuCompletedBlocks := controlCpu.io.dbgCompletedBlocks
 
   for (i <- 0 until numCores) {
     val core = cores(i)
     val ub   = ubs(i)
 
-    core.io.start := io.start
+    core.io.start := controlCpu.io.coreLaunch(i).valid
+    core.io.blockIdx := Mux(controlCpu.io.coreLaunch(i).valid, controlCpu.io.coreLaunch(i).bits, controlCpu.io.coreBlockIdx(i))
 
     // Shared instruction memory: each core reads independently
-    // Since all cores run the same program, they'll read the same instructions
-    // We give each core its own read port (Mem supports multiple combinational reads)
-    core.io.imemData := imem.io.instr
-    if (i == 0) imem.io.addr := core.io.imemAddr
+    core.io.imemData := imem.read(core.io.imemAddr)
 
     // Per-core UB (dual-port: A for Scalar, B for DMA)
     ub.io.portA.en    := core.io.ubEn

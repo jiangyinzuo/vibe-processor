@@ -60,6 +60,7 @@ class OverlapBenchmark extends AnyFunSpec with ChiselSim {
 
   def initDut(dut: ToyAscendTop): Unit = {
     dut.io.start.poke(false.B)
+    dut.io.blockDim.poke(0.U)
     dut.io.imemLoadEn.poke(false.B)
     dut.io.l2Ext.en.poke(false.B)
     dut.io.l2Ext.we.poke(false.B)
@@ -240,4 +241,3 @@ class OverlapBenchmark extends AnyFunSpec with ChiselSim {
     }
   }
 }
-

@@ -232,6 +232,11 @@ class ScalarUnit(
       }
     }
 
-    is(sHalted) {}
+    is(sHalted) {
+      when(io.start) {
+        pc := 0.U
+        state := sFetch
+      }
+    }
   }
 }

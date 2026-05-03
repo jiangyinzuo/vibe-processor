@@ -22,6 +22,7 @@ class WarpContext(warpWidth: Int = 8, dw: Int = 32) extends Bundle {
   val pc             = UInt(8.W)       // 程序计数器
   val state          = WarpState()     // Warp 状态
   val activeMask     = UInt(8.W)       // 活跃线程掩码（8 线程）
+  val ctaId          = UInt(GpuParams.CTAIdWidth.W) // 所属 CTA / thread block
   val memWaitCounter = UInt(8.W)       // 内存等待计数器
   val memRdReg       = UInt(4.W)       // 内存读取目标寄存器
   val memRdData      = Vec(warpWidth, SInt(dw.W))  // 内存读取数据缓冲
@@ -35,6 +36,7 @@ object WarpContext {
     ctx.pc             := 0.U
     ctx.state          := WarpState.Ready
     ctx.activeMask     := 0xFF.U  // 所有 8 个线程活跃
+    ctx.ctaId          := 0.U
     ctx.memWaitCounter := 0.U
     ctx.memRdReg       := 0.U
     ctx.memRdData      := VecInit(Seq.fill(warpWidth)(0.S(dw.W)))

@@ -5,16 +5,19 @@ import chisel3.util._
 
 /** AI Core: scalar dispatcher + decoupled CubeCore/VectorCore compute paths + MTEs.
   *
-  * @param coreId Used for L2 address offset in data-parallel mode.
+  * @param coreId Physical core index, kept for debug/diagram compatibility.
+  * @param blockStride L2 row stride between SPMD logical blocks.
   */
 class AiCore(
     n:      Int = AscendParams.ArraySize,
     dw:     Int = AscendParams.DataWidth,
     aw:     Int = AscendParams.AccWidth,
-    coreId: Int = 0
+    coreId: Int = 0,
+    blockStride: Int = AscendParams.L2SliceSize
 ) extends Module {
   val io = IO(new Bundle {
     val start    = Input(Bool())
+    val blockIdx = Input(UInt(AscendParams.BlockDimWidth.W))
     val halted   = Output(Bool())
     val imemAddr = Output(UInt(8.W))
     val imemData = Input(UInt(AscendParams.InstrWidth.W))
@@ -101,7 +104,8 @@ class AiCore(
     dmaQueueTail := (dmaQueueTail + 1.U) % dmaQueueDepth.U
   }
 
-  val l2Offset = (coreId * AscendParams.L2SliceSize).U(AscendParams.L2AddrW.W)
+  val l2OffsetFull = io.blockIdx * blockStride.U(AscendParams.L2AddrW.W)
+  val l2Offset = l2OffsetFull(AscendParams.L2AddrW - 1, 0)
   val dmaReq = dmaQueue(dmaQueueHead)
   val mte2Start = dmaQueueValid(dmaQueueHead) && !mte2.io.busy && !mte2.io.done
 
@@ -149,11 +153,23 @@ class AiCore(
   io.perf := perf
 
   val running = RegInit(false.B)
-  when(io.start)  { running := true.B }
-  when(io.halted) { running := false.B }
+  when(io.start) {
+    running := true.B
+  }.elsewhen(io.halted) {
+    running := false.B
+  }
 
   when(running && !io.halted) {
     perf.totalCycles := perf.totalCycles + 1.U
+    perf.activeBlockCycles := perf.activeBlockCycles + 1.U
+  }
+
+  when(io.start) {
+    perf.blockStarts := perf.blockStarts + 1.U
+  }
+  val haltedPrev = RegNext(io.halted, false.B)
+  when(io.halted && !haltedPrev) {
+    perf.blockCompletions := perf.blockCompletions + 1.U
   }
 
   val wasInDecode = RegNext(scalar.io.dbgState === 2.U, false.B)

@@ -1,13 +1,14 @@
 # NPU 流水线时序分析
 
-本文记录 toy NPU 在 CubeCore/VectorCore/MTE 解耦后的两层工具分析结果，用于判断后续流水线应该优先切在哪里。
+本文记录 toy NPU 在 CubeCore/VectorCore/MTE 解耦后的两层工具分析结果，用于判断后续流水线应该优先切在哪里，并记录第一次流水线切分后的验证结果。
 
 结论先行：
 
-1. 当前不应该优先切 `ScalarUnit`。它在第二层 pre-layout STA 下可以满足 `10ns` 参考约束。
-2. 当前最值得优先切的是 `CubeCore` 的 tile issue / launch 路径，其次是 `SystolicArray` / `CubeUnit` 计算阵列内部。
-3. `VectorCore` 和 `Mte2` 也存在时序压力，但优先级低于 CubeCore/Cube。
-4. 这些数据是 pre-layout 粗估，不是最终签核 Fmax；它们适合指导早期流水线切分点选择。
+1. 已完成第一步切分：`CubeCore` 的 tile issue / launch 路径拆成两拍。
+2. 切分后功能测试、Verilog elaboration 和 Yosys `check` 均通过。
+3. 切分后 `CubeCore` 的 LTP 最长路径已经转移到 `CubeUnit` / `SystolicArray` feed 到 PE 乘加路径；下一步若继续提频，应优先切计算阵列内部。
+4. 当前不应该优先切 `ScalarUnit`。它在第二层 pre-layout STA 下可以满足 `10ns` 参考约束。
+5. 这些数据是 pre-layout 粗估，不是最终签核 Fmax；它们适合指导早期流水线切分点选择。
 
 ## 环境
 
@@ -147,17 +148,19 @@ l0aReady/l0bReady selected by computeSlot
 
 对应源码位置：
 
-- `slotReadyAfterWrite` 与 ready-bit 管理：[CubeCore.scala](../../src/main/scala/ascend/CubeCore.scala#L55)
-- `computeSlot` issue 和 `cube.io.start`：[CubeCore.scala](../../src/main/scala/ascend/CubeCore.scala#L85)
+- `slotReadyAfterWrite` 与 ready-bit 管理：[CubeCore.scala](../../src/main/scala/ascend/CubeCore.scala#L62)
+- `computeSlot` issue 和 `cube.io.start`：[CubeCore.scala](../../src/main/scala/ascend/CubeCore.scala#L89)
 
 ## 流水线切分建议
 
 优先级：
 
-1. **切 `CubeCore` tile issue/launch 路径。**
+1. **切 `CubeCore` tile issue/launch 路径。已实现。**
    把 “检查 `l0aReady/l0bReady` + 选择 `activeSlot` + 清 ready bit + `startCube`” 拆成两拍：
-   - issue stage：选择 `computeSlot`，锁存 `activeSlot`，产生 `launchValid`
+   - issue stage：检查 `computeSlot` 对应 tile 是否 ready，锁存 `issueSlot`
    - launch stage：清 ready bit，启动 Cube
+
+   当前实现位于 [CubeCore.scala](../../src/main/scala/ascend/CubeCore.scala#L89)：`sIdle` 只检查 ready bit 并锁存 `issueSlot`，`sLaunch` 再更新 `activeSlot`、清 ready bit、递增 `computeSlot` 并拉高 `cube.io.start`。这样 `l0aReady/l0bReady` 选择不再和 Cube 启动、ready bit 清除处于同一拍。
 
 2. **再切 `SystolicArray` / `CubeUnit`。**
    如果目标频率更高，需要继续把 PE 内乘加或阵列控制路径分拍。当前 `SystolicArray` 独立 data arrival 约 `60.9ns`，已经说明计算阵列不能长期保持单周期/浅流水假设。
@@ -170,6 +173,65 @@ l0aReady/l0bReady selected by computeSlot
 
 5. **暂不优先切 `ScalarUnit`。**
    `ScalarUnit` 在当前参考约束下 slack 为正，继续切它不会显著改善全局瓶颈。
+
+## 第一次切分后的验证
+
+实现内容：
+
+- `CubeCore` 状态机从 `sIdle -> sRun -> sDone` 改为 `sIdle -> sLaunch -> sRun -> sDone`。
+- 新增 `issueSlot`，在 issue stage 锁存本次要消费的 tile slot。
+- `sLaunch` 负责设置 `activeSlot`、清 `l0aReady/l0bReady`、推进 `computeSlot` 并启动 `CubeUnit`。
+- `CubeUnit` launch 周期使用 `issueSlot` 读 L0A/L0B，后续运行周期使用 `activeSlot`，避免依赖同拍更新后的寄存器值。
+
+功能验证命令：
+
+```bash
+sbt "testOnly ascend.CubeUnitTest ascend.IntegrationTest ascend.MultiCoreTest ascend.SpmdTest ascend.Pipeline3Test"
+sbt "testOnly ascend.*"
+sbt "runMain top.Elaborate"
+yosys -q -p 'read_verilog -sv generated/ascend/yosys/*.sv; hierarchy -top ToyAscendTop; proc; opt; check'
+```
+
+验证结果：
+
+| 命令 | 结果 |
+|---|---|
+| `sbt "testOnly ascend.CubeUnitTest ascend.IntegrationTest ascend.MultiCoreTest ascend.SpmdTest ascend.Pipeline3Test"` | 5 suites / 7 tests passed |
+| `sbt "testOnly ascend.*"` | 13 suites / 24 tests passed |
+| `sbt "runMain top.Elaborate"` | 生成 `generated/ascend/` 和 `generated/gpu/` 成功 |
+| Yosys `check` | 通过，无报错输出 |
+
+可观察性能变化：
+
+| 测试 | 切分后结果 | 说明 |
+|---|---:|---|
+| 单核 8×8 MATMUL 集成测试 | 182 cycles | 多了 1 拍 CubeCore launch stage |
+| 2 核 MATMUL | per-core total=182 cycles | 两个物理 AiCore 结果均正确 |
+| SPMD `blockDim=4` on 2 cores | 367 cycles | 4 个逻辑 block 全部完成 |
+| `Pipeline3Test` | 447 cycles, overlap=66 cycles | LOAD/MATMUL 重叠仍成立 |
+
+切分后 LTP 粗筛命令：
+
+```bash
+for top in CubeCore AiCore; do
+  yosys -ql "/tmp/yosys_${top}_post_pipeline.log" -p "
+    read_verilog -sv generated/ascend/yosys/*.sv
+    hierarchy -top $top
+    proc; opt; flatten; opt
+    ltp -noff
+    stat
+  "
+done
+```
+
+切分后 LTP 结果：
+
+| 模块 | LTP 长度 | 当前最长路径 |
+|---|---:|---|
+| `CubeCore` | 9 | `state` / `cubeReadSlot` → `CubeUnit` act feed → `SystolicArray` PE multiply/add |
+| `AiCore` | 16 | `ScalarUnit` vector start decode → `perf_bubbleCycles` 条件 |
+
+解释：`CubeCore` 的 LTP 数字没有直接下降，因为 LTP 只数拓扑层数，不计真实门延迟；切分后最长结构路径已经不再是 ready-bit issue/launch，而是落到 `CubeUnit` / `SystolicArray` 数据注入到 PE 乘加路径。后续要继续提频，应切 `CubeUnit`/`SystolicArray`，而不是继续拆 `ScalarUnit`。
 
 ## 限制
 

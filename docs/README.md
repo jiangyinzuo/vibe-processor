@@ -4,8 +4,8 @@
 
 本项目包含两个教学用 AI 加速器的 RTL 实现：
 
-- **玩具版昇腾 NPU** — 2×AiCore，收缩阵列 + DMA + 三级存储层次
-- **玩具版英伟达 GPU** — 4×SM，SIMT 执行模型 + 双 Warp 调度器
+- **玩具版昇腾 NPU** — Control CPU + AI CPU + SPMD block 调度 + 2×AiCore，收缩阵列 + DMA + 三级存储层次
+- **玩具版英伟达 GPU** — 4×SM，CTA/thread block 层 + SIMT 执行模型 + 双 Warp 调度器
 
 使用 Chisel 7 (Scala) 编写，Verilator (via svsim) 仿真，ScalaTest 验证。
 
@@ -28,11 +28,12 @@ docs/npu/
 ```
 
 **快速链接**：
-- [NPU 架构](npu/architecture.md) - 收缩阵列、DMA、多核并行
+- [NPU 架构](npu/architecture.md) - Control CPU、AI CPU、SPMD block、收缩阵列、DMA、多核并行
 - [架构差异](npu/architecture_differences.md) - 与真实昇腾的差距分析
 - [DMA Overlap](npu/dma_overlap.md) - 非阻塞 DMA、双缓冲、性能优化
 - [NPU 流水线时序分析](npu/pipeline_timing_analysis.md) - Yosys LTP、OpenSTA 粗估和切分优先级
 - [性能测量](npu/performance_measurement.md) - 实际加速比 1.22×，重叠率 24.1%
+- [频率与周期联合评估](frequency_performance.md) - OpenSTA Fmax 粗估和 runtime 换算
 
 ### GPU 文档
 
@@ -44,7 +45,7 @@ docs/gpu/
 ```
 
 **快速链接**：
-- [GPU 架构](gpu/architecture.md) - SIMT、Warp 调度、双调度器
+- [GPU 架构](gpu/architecture.md) - CTA/thread block、SIMT、Warp 调度、双调度器
 - [Warp 调度](gpu/warp_scheduling.md) - Round-Robin、协作式调度、延迟隐藏
 - [双调度器](gpu/dual_scheduler_summary.md) - 2-3× 性能提升
 
@@ -53,11 +54,13 @@ docs/gpu/
 ```
 docs/
 ├── performance_comparison.md    # NPU vs GPU 性能对比
+├── frequency_performance.md     # cycles × Fmax 运行时间估算
 └── isa.md                       # 指令集说明
 ```
 
 **快速链接**：
 - [性能对比](performance_comparison.md) - 矩阵乘法性能分析
+- [频率与周期联合评估](frequency_performance.md) - cycles × Fmax 运行时间估算
 - [指令集](isa.md) - NPU 和 GPU 指令格式
 
 ### 交互式文档
@@ -83,10 +86,11 @@ docs/interactive/
 
 ### 深入理解 NPU（1.5 小时）
 
-1. [NPU 架构](npu/architecture.md) - 收缩阵列、DMA、多核
+1. [NPU 架构](npu/architecture.md) - Control CPU、AI CPU、SPMD block、收缩阵列、DMA、多核
 2. [DMA Overlap](npu/dma_overlap.md) - 非阻塞 DMA、双缓冲优化
 3. [架构差异](npu/architecture_differences.md) - 与真实昇腾对比
 4. [性能对比](performance_comparison.md) - 性能分析
+5. [频率与周期联合评估](frequency_performance.md) - cycles × Fmax 估算运行时间
 
 ### 深入理解 GPU（1.5 小时）
 
@@ -121,11 +125,13 @@ docs/interactive/
 ### 我想了解...
 
 **NPU 相关**：
-- NPU 的收缩阵列如何工作？→ [NPU 架构](npu/architecture.md#3-收缩阵列)
-- NPU 的 DMA 机制？→ [NPU 架构](npu/architecture.md#2-存储层次)
+- NPU 的收缩阵列如何工作？→ [NPU 架构](npu/architecture.md#4-收缩阵列)
+- NPU 的 SPMD blockDim/blockIdx 如何工作？→ [NPU 架构](npu/architecture.md#2-spmd-编程模型)
+- NPU 的 DMA 机制？→ [NPU 架构](npu/architecture.md#3-存储层次)
 - 玩具 NPU 和真实昇腾的差距？→ [架构差异](npu/architecture_differences.md)
 
 **GPU 相关**：
+- GPU 的 CTA/thread block 如何映射到 SM？→ [GPU 架构](gpu/architecture.md#2-cta--thread-block-层)
 - GPU 的 Warp 调度机制？→ [Warp 调度](gpu/warp_scheduling.md)
 - 什么是协作式调度？→ [Warp 调度](gpu/warp_scheduling.md#协作式调度)
 - 双调度器如何提升性能？→ [双调度器](gpu/dual_scheduler_summary.md)
@@ -136,7 +142,7 @@ docs/interactive/
 
 **指令和测试**：
 - 指令格式是什么？→ [指令集](isa.md)
-- 如何运行测试？→ [NPU 架构](npu/architecture.md#8-测试) / [GPU 架构](gpu/architecture.md#7-测试)
+- 如何运行测试？→ [NPU 架构](npu/architecture.md#9-测试) / [GPU 架构](gpu/architecture.md#8-测试)
 
 ---
 
@@ -156,8 +162,8 @@ src/main/scala/
 
 ```
 src/test/scala/
-├── ascend/          # NPU 测试 (16 cases)
-├── gpu/             # GPU 测试 (7 cases)
+├── ascend/          # NPU 测试，包含 AiCpu/SPMD/Cube/Vector/MTE
+├── gpu/             # GPU 测试 (包含 CTA/thread ID 集成测试)
 └── common/          # 共享组件测试 (4 cases)
 ```
 

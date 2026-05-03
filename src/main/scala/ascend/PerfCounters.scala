@@ -5,6 +5,10 @@ import chisel3._
 /** Performance counters for cycle-level profiling. Pure observation, no functional impact. */
 class PerfCounters extends Bundle {
   val totalCycles       = UInt(32.W)
+  // SPMD block execution
+  val blockStarts       = UInt(16.W)
+  val blockCompletions  = UInt(16.W)
+  val activeBlockCycles = UInt(32.W)
   // Instruction counts by type
   val instrNop          = UInt(16.W)
   val instrHalt         = UInt(16.W)

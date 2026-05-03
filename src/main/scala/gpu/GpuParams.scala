@@ -5,8 +5,13 @@ import common.Params
 object GpuParams {
   val DataWidth   = Params.AccWidth  // GPU works on INT32 natively
   val WarpWidth   = 4                // 4 threads per warp (real GPU: 32)
-  val NumWarps    = 4                // 4 warps per SM
+  val MaxCTAsPerSM = 2               // 2 resident CTAs per SM (real GPUs support 16-32+)
+  val WarpsPerCTA = 2                // 2 warps per CTA in the toy model
+  val ThreadsPerCTA = WarpsPerCTA * WarpWidth
+  val NumWarps    = MaxCTAsPerSM * WarpsPerCTA
   val NumSMs      = 4                // 4 SMs (real GPU: 16-128)
+  val NumCTAs     = NumSMs * MaxCTAsPerSM
+  val CTAIdWidth  = 8
   val NumRegs     = 16               // 16 registers per thread
   val InstrWidth  = 32
   val IMEMDepth   = 256
@@ -14,6 +19,13 @@ object GpuParams {
   val GlobalAddrW = 16
   val SharedDepth = 256
   val SharedAddrW = 8
+}
+
+object GpuSpecialReg {
+  val ThreadIdxX   = 12 // threadIdx.x within the CTA
+  val WarpIdxInCTA = 13 // warp index within the CTA
+  val BlockIdxX    = 14 // blockIdx.x / CTA ID
+  val Zero         = 15 // conventional zero/base register used by tests
 }
 
 object GpuOpcode {

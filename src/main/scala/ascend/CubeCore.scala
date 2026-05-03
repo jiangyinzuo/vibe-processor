@@ -49,8 +49,12 @@ class CubeCore(
   val fillSlot = RegInit(0.U(slotW.W))
   val computeSlot = RegInit(0.U(slotW.W))
   val activeSlot = RegInit(0.U(slotW.W))
+  val issueSlot = RegInit(0.U(slotW.W))
   val l0aReady = RegInit(VecInit.fill(tileSlots)(false.B))
   val l0bReady = RegInit(VecInit.fill(tileSlots)(false.B))
+
+  val sIdle :: sLaunch :: sRun :: sDone :: Nil = Enum(4)
+  val state = RegInit(sIdle)
 
   val writeLastRow = io.mte1Write.valid && io.mte1Write.bits.row === (n - 1).U
   val writeActDone = writeLastRow && io.mte1Write.bits.target === CubeLocalTarget.ACT
@@ -72,26 +76,30 @@ class CubeCore(
     }
   }
 
+  // Split tile issue and CubeUnit launch so ready-bit selection is not on the
+  // same cycle as the high-fanout Cube start/clear path.
+  val cubeReadSlot = Mux(state === sLaunch, issueSlot, activeSlot)
   val actData = Wire(Vec(n, Vec(n, SInt(dw.W))))
   val weightData = Wire(Vec(n, Vec(n, SInt(dw.W))))
-  actData := l0a(activeSlot)
-  weightData := l0b(activeSlot)
-
-  val sIdle :: sRun :: sDone :: Nil = Enum(3)
-  val state = RegInit(sIdle)
+  actData := l0a(cubeReadSlot)
+  weightData := l0b(cubeReadSlot)
 
   val startCube = WireDefault(false.B)
 
   switch(state) {
     is(sIdle) {
       when(io.start && l0aReady(computeSlot) && l0bReady(computeSlot)) {
-        activeSlot := computeSlot
-        l0aReady(computeSlot) := false.B
-        l0bReady(computeSlot) := false.B
-        computeSlot := computeSlot + 1.U
-        startCube := true.B
-        state := sRun
+        issueSlot := computeSlot
+        state := sLaunch
       }
+    }
+    is(sLaunch) {
+      activeSlot := issueSlot
+      l0aReady(issueSlot) := false.B
+      l0bReady(issueSlot) := false.B
+      computeSlot := issueSlot + 1.U
+      startCube := true.B
+      state := sRun
     }
     is(sRun) {
       when(cube.io.done) {

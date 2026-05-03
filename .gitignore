@@ -42,6 +42,7 @@ Thumbs.db
 # 性能测试输出
 benchmark/results/
 *.csv
+!docs/frequency_fmax_summary.csv
 *.json.bak
 
 # 文档生成（保留交互式文档）

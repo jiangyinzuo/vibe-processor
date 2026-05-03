@@ -130,5 +130,35 @@ class GpuIntegrationTest extends AnyFunSpec with ChiselSim {
         }
       }
     }
+
+    it("runs multiple CTAs per SM and exposes thread/block IDs") {
+      simulate(new ToyGpuTop(numSMs = 1, numCTAs = 4, gmemLatency = 1)) { dut =>
+        initDut(dut)
+        writeGmem(dut, 0, Array.fill(W)(GpuParams.ThreadsPerCTA))
+
+        loadProgram(dut, Seq(
+          enc(0x2, rd = 0, rs1 = GpuSpecialReg.Zero, imm = 0),              // R0 = blockDim.x
+          enc(0x5, rd = 1, rs1 = GpuSpecialReg.BlockIdxX, rs2 = 0),         // R1 = blockIdx.x * blockDim.x
+          enc(0x4, rd = 2, rs1 = 1, rs2 = GpuSpecialReg.ThreadIdxX),        // R2 = global thread id
+          enc(0x3, rs1 = 2, rs2 = GpuSpecialReg.ThreadIdxX, imm = 16),      // store threadIdx.x
+          enc(0x3, rs1 = 2, rs2 = GpuSpecialReg.BlockIdxX, imm = 64),       // store blockIdx.x
+          enc(0x1)
+        ))
+
+        val cycles = runToHalt(dut, maxCycles = 400)
+        println(s"1-SM 4-CTA ID test: $cycles cycles")
+
+        dut.io.perf(0).ctaLaunches.expect(4.U)
+        dut.io.perf(0).ctaCompletions.expect(4.U)
+
+        for (cta <- 0 until 4) {
+          val base = cta * GpuParams.ThreadsPerCTA
+          assert(readGmem(dut, 16 + base).toSeq == Seq(0, 1, 2, 3))
+          assert(readGmem(dut, 16 + base + W).toSeq == Seq(4, 5, 6, 7))
+          assert(readGmem(dut, 64 + base).toSeq == Seq.fill(W)(cta))
+          assert(readGmem(dut, 64 + base + W).toSeq == Seq.fill(W)(cta))
+        }
+      }
+    }
   }
 }

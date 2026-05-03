@@ -50,7 +50,8 @@ class SMSubPartition(
 
   for (w <- 0 until localWarps) {
     scheduler.io.warpHalted(w) :=
-      (io.warpState(w) === WarpState.Halted) ||
+      !io.warpStarted(w) ||
+        (io.warpState(w) === WarpState.Halted) ||
         (io.warpState(w) === WarpState.Stalled)
   }
   io.grant := scheduler.io.grant

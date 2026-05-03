@@ -9,6 +9,7 @@ object AscendParams {
   val ArraySize  = 8  // 升级：从 4×4 扩展到 8×8 (64 个 PE)
   val InstrWidth = 32
   val NumCores   = 2
+  val BlockDimWidth = 16
   // Per-core UB (on-chip, private)
   val UBDepth    = 256
   val UBAddrW    = 16

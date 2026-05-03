@@ -17,4 +17,10 @@ scalacOptions ++= Seq(
 )
 
 Test / fork := true
-Test / parallelExecution := false
+Test / parallelExecution := true
+Test / testForkedParallel := true
+Global / concurrentRestrictions := Seq(
+  Tags.limitAll(16),
+  Tags.limit(Tags.ForkedTestGroup, 8),
+  Tags.limit(Tags.Test, 8)
+)

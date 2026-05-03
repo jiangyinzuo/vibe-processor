@@ -4,8 +4,8 @@
 
 ## 🎯 项目特点
 
-- **NPU (昇腾风格)**: 收缩阵列架构，支持矩阵乘法和向量运算
-- **GPU (英伟达风格)**: SIMT 架构，Warp 调度，多 SM 并行，共享 CUDA Core
+- **NPU (昇腾风格)**: 显式 Control CPU + AI CPU，SPMD block 调度，收缩阵列架构，支持矩阵乘法和向量运算
+- **GPU (英伟达风格)**: SIMT 架构，CTA/thread block 层，多 resident CTA/SM，Warp 调度，多 SM 并行，共享 CUDA Core
 - **DMA-Compute Overlap**: 非阻塞 DMA，流水线优化，实际加速比 1.22×
 - **完整文档**: 架构说明、ISA 定义、性能分析
 
@@ -221,10 +221,11 @@ generated/gpu/yosys/
 
 ### NPU 文档
 
-- **[NPU 架构](docs/npu/architecture.md)** - 收缩阵列、DMA、多核并行
+- **[NPU 架构](docs/npu/architecture.md)** - Control CPU、AI CPU、SPMD block、收缩阵列、DMA、多核并行
 - **[DMA-Compute Overlap](docs/npu/dma_overlap.md)** - 非阻塞 DMA、双缓冲、性能优化
 - **[性能测量](docs/npu/performance_measurement.md)** - 实际加速比 1.22×，重叠率 24.1%
 - **[NPU 流水线时序分析](docs/npu/pipeline_timing_analysis.md)** - Yosys LTP、OpenSTA 粗估和切分优先级
+- **[频率与周期联合评估](docs/frequency_performance.md)** - Fmax 粗估和 runtime 换算
 
 ### GPU 文档
 
@@ -242,6 +243,9 @@ vibe-processor/
 ├── src/
 │   ├── main/scala/
 │   │   ├── ascend/          # NPU 实现
+│   │   │   ├── ControlCpu.scala
+│   │   │   ├── AiCpu.scala
+│   │   │   ├── SpmdBlockScheduler.scala
 │   │   │   ├── AiCore.scala
 │   │   │   ├── SystolicArray.scala
 │   │   │   └── ...
@@ -267,6 +271,8 @@ vibe-processor/
 ### NPU (昇腾风格)
 
 - ✅ **8×8 收缩阵列** - 矩阵乘法加速
+- ✅ **Control CPU 调度核** - 复用 SPMD block scheduler，负责 device-side block dispatch
+- ✅ **AI CPU 辅助执行部件** - 建模 CPU 类 device task，适合非矩阵/控制型任务
 - ✅ **CubeCore/VectorCore 解耦** - Cube 与 Vector 走独立执行核心
 - ✅ **MTE 多通路** - MTE1/MTE2/MTE3 分别覆盖 UB→L0、L2↔UB、L0C→UB
 - ✅ **多核并行** - 2 个 AiCore，独立执行

@@ -213,7 +213,7 @@ when(cubeActive && (mte1.io.busy || mte2.io.busy)) {
 
 ```
 === NPU 性能统计 (8×8 矩阵乘法) ===
-总周期数:            181
+总周期数:            182
 DMA 周期:             72
 重叠周期:              22
 ```

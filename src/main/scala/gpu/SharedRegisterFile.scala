@@ -26,12 +26,21 @@ class SharedRegisterFile(
     dataWidth: Int = 32,
     numPorts: Int = 16  // CUDA Core 数量
 ) extends Module {
+  private val warpIdWidth = math.max(1, log2Ceil(numWarps))
+  private val laneIdWidth = math.max(1, log2Ceil(warpWidth))
+
   val io = IO(new Bundle {
+    // CTA launch initialization. The parent SM asserts initWarp for the
+    // physical warp slots assigned to a newly resident CTA.
+    val initWarp = Input(Vec(numWarps, Bool()))
+    val initBlockId = Input(Vec(numWarps, UInt(GpuParams.CTAIdWidth.W)))
+    val initWarpIdxInCTA = Input(Vec(numWarps, UInt(warpIdWidth.W)))
+
     // 读端口（组合逻辑）
     val rdAddr = Input(Vec(numPorts, new Bundle {
       val valid  = Bool()
-      val warpId = UInt(log2Ceil(numWarps).W)
-      val laneId = UInt(log2Ceil(warpWidth).W)
+      val warpId = UInt(warpIdWidth.W)
+      val laneId = UInt(laneIdWidth.W)
       val rs1    = UInt(log2Ceil(numRegs).W)
       val rs2    = UInt(log2Ceil(numRegs).W)
       val rs3    = UInt(log2Ceil(numRegs).W)
@@ -45,8 +54,8 @@ class SharedRegisterFile(
     // 写端口（时序逻辑）
     val wrAddr = Input(Vec(numPorts, new Bundle {
       val valid  = Bool()
-      val warpId = UInt(log2Ceil(numWarps).W)
-      val laneId = UInt(log2Ceil(warpWidth).W)
+      val warpId = UInt(warpIdWidth.W)
+      val laneId = UInt(laneIdWidth.W)
       val rd     = UInt(log2Ceil(numRegs).W)
     }))
     val wrData = Input(Vec(numPorts, SInt(dataWidth.W)))
@@ -99,6 +108,28 @@ class SharedRegisterFile(
       val laneId = io.wrAddr(i).laneId
       val rd     = io.wrAddr(i).rd
       regs(warpId)(laneId)(rd) := io.wrData(i)
+    }
+  }
+
+  // === CTA 特殊寄存器初始化 ===
+  //
+  // 真实 CUDA 程序通过 built-in variables 读取 thread/block 坐标；
+  // 在这个玩具 ISA 中，这些坐标通过只读约定寄存器暴露给程序。
+  // R12 = threadIdx.x, R13 = warpIdxInCTA, R14 = blockIdx.x, R15 = 0.
+  for (w <- 0 until numWarps) {
+    when(io.initWarp(w)) {
+      for (lane <- 0 until warpWidth) {
+        for (r <- 0 until numRegs) {
+          regs(w)(lane)(r) := 0.S
+        }
+
+        val threadIdx =
+          io.initWarpIdxInCTA(w) * warpWidth.U + lane.U(laneIdWidth.W)
+        regs(w)(lane)(GpuSpecialReg.ThreadIdxX) := threadIdx.asSInt
+        regs(w)(lane)(GpuSpecialReg.WarpIdxInCTA) := io.initWarpIdxInCTA(w).asSInt
+        regs(w)(lane)(GpuSpecialReg.BlockIdxX) := io.initBlockId(w).asSInt
+        regs(w)(lane)(GpuSpecialReg.Zero) := 0.S
+      }
     }
   }
 
