@@ -85,7 +85,14 @@ class PerfCounterTest extends AnyFunSpec with ChiselSim {
       "ubWrites" -> p.ubWrites.peek().litValue.toLong,
       "dmaLoadCount" -> p.dmaLoadCount.peek().litValue.toLong,
       "dmaStoreCount" -> p.dmaStoreCount.peek().litValue.toLong,
-      "dmaTotalCycles" -> p.dmaTotalCycles.peek().litValue.toLong
+      "dmaTotalCycles" -> p.dmaTotalCycles.peek().litValue.toLong,
+      "copyInCycles" -> p.copyInCycles.peek().litValue.toLong,
+      "copyOutCycles" -> p.copyOutCycles.peek().litValue.toLong,
+      "copyInComputeOverlapCycles" -> p.copyInComputeOverlapCycles.peek().litValue.toLong,
+      "dmaComputeOverlapCycles" -> p.dmaComputeOverlapCycles.peek().litValue.toLong,
+      "copyOutComputeOverlapCycles" -> p.copyOutComputeOverlapCycles.peek().litValue.toLong,
+      "dataflowOverlapCycles" -> p.dataflowOverlapCycles.peek().litValue.toLong,
+      "overlapCycles" -> p.overlapCycles.peek().litValue.toLong
     )
   }
 
@@ -132,7 +139,7 @@ class PerfCounterTest extends AnyFunSpec with ChiselSim {
 
         val p = peekPerf(dut, 0)
         println(
-          s"Perf: total=${p("totalCycles")} dma=${p("dmaTotalCycles")} cube=${p("cubeTotalCycles")}"
+          s"Perf: total=${p("totalCycles")} dma=${p("dmaTotalCycles")} copyIn=${p("copyInCycles")} copyOut=${p("copyOutCycles")} cube=${p("cubeTotalCycles")} dataflowOverlap=${p("dataflowOverlapCycles")}"
         )
         assert(p("instrLoad") == 2)
         assert(p("instrMatmul") == 1)
@@ -141,6 +148,12 @@ class PerfCounterTest extends AnyFunSpec with ChiselSim {
         assert(p("dmaStoreCount") == 1)
         assert(p("cubeTotalCycles") > 0)
         assert(p("dmaTotalCycles") > 0)
+        assert(p("copyInCycles") > 0)
+        assert(p("copyOutCycles") > 0)
+        assert(p("dataflowOverlapCycles") > 0)
+        assert(p("overlapCycles") >= p("copyInComputeOverlapCycles"))
+        assert(p("overlapCycles") >= p("dmaComputeOverlapCycles"))
+        assert(p("overlapCycles") <= p("copyInComputeOverlapCycles") + p("dmaComputeOverlapCycles"))
       }
     }
   }

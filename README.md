@@ -226,6 +226,7 @@ generated/gpu/yosys/
 - **[CubeCore 真实化优化](docs/npu/cubecore_realism_optimization.md)** - Cube 输入快照、L0C 累加和优化前后性能对比
 - **[Cube 分形 Tile 格式](docs/npu/fractal_tile_format.md)** - 16×16 tile、pack/padding 原理和性能效果
 - **[PE MAC 流水化](docs/npu/pe_mac_pipeline.md)** - 两级 MAC、psum 对齐和 Fmax 粗估
+- **[昇腾式数据流设计思想](docs/npu/ascend_dataflow_design.md)** - CopyIn/Compute/CopyOut、MTE overlap 和 event/token 思想
 - **[频率与周期联合评估](docs/frequency_performance.md)** - Fmax 粗估和 runtime 换算
 
 ### GPU 文档

@@ -133,14 +133,20 @@ class IntegrationTest extends AnyFunSpec with ChiselSim {
         val totalCycles = perf.totalCycles.litValue.toInt
         val cubeComputeCycles = perf.cubeComputeCycles.litValue.toInt
         val dmaTotalCycles = perf.dmaTotalCycles.litValue.toInt
+        val copyInCycles = perf.copyInCycles.litValue.toInt
+        val copyOutCycles = perf.copyOutCycles.litValue.toInt
         val bubbleCycles = perf.bubbleCycles.litValue.toInt
         val overlapCycles = perf.overlapCycles.litValue.toInt
+        val dataflowOverlapCycles = perf.dataflowOverlapCycles.litValue.toInt
 
         println(s"\n=== NPU 性能统计 (${N}×${N} 矩阵乘法) ===")
         println(f"总周期数:           $totalCycles%4d")
         println(f"Cube 计算周期:      $cubeComputeCycles%4d")
-        println(f"DMA 周期:           $dmaTotalCycles%4d")
-        println(f"重叠周期:           $overlapCycles%4d")
+        println(f"MTE2 DMA 周期:      $dmaTotalCycles%4d")
+        println(f"CopyIn 周期:        $copyInCycles%4d")
+        println(f"CopyOut 周期:       $copyOutCycles%4d")
+        println(f"MTE/Cube 重叠周期:  $overlapCycles%4d")
+        println(f"数据流重叠周期:     $dataflowOverlapCycles%4d")
         println(f"气泡周期:           $bubbleCycles%4d")
         println(f"计算效率:           ${cubeComputeCycles * 100.0 / totalCycles}%.1f%%")
         println(f"DMA 占比:           ${dmaTotalCycles * 100.0 / totalCycles}%.1f%%")

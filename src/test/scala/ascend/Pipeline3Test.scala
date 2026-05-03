@@ -157,7 +157,10 @@ class Pipeline3Test extends AnyFunSpec with ChiselSim {
         val perf = dut.io.perf(0).peek()
         val cubeComputeCycles = perf.cubeComputeCycles.litValue.toInt
         val dmaTotalCycles = perf.dmaTotalCycles.litValue.toInt
+        val copyInCycles = perf.copyInCycles.litValue.toInt
+        val copyOutCycles = perf.copyOutCycles.litValue.toInt
         val overlapCycles = perf.overlapCycles.litValue.toInt
+        val dataflowOverlapCycles = perf.dataflowOverlapCycles.litValue.toInt
 
         println("\n" + "=" * 70)
         println("三级流水线性能测试")
@@ -165,8 +168,11 @@ class Pipeline3Test extends AnyFunSpec with ChiselSim {
         println(f"Tile 数量:              $numTiles")
         println(f"总周期数:               $cycles%5d")
         println(f"Cube 计算周期:          $cubeComputeCycles%5d")
-        println(f"DMA 周期:               $dmaTotalCycles%5d")
-        println(f"重叠周期:               $overlapCycles%5d")
+        println(f"MTE2 DMA 周期:          $dmaTotalCycles%5d")
+        println(f"CopyIn 周期:            $copyInCycles%5d")
+        println(f"CopyOut 周期:           $copyOutCycles%5d")
+        println(f"MTE/Cube 重叠周期:      $overlapCycles%5d")
+        println(f"数据流重叠周期:         $dataflowOverlapCycles%5d")
         println(f"计算效率:               ${cubeComputeCycles * 100.0 / cycles}%.1f%%")
         println(f"DMA 占比:               ${dmaTotalCycles * 100.0 / cycles}%.1f%%")
         println(

@@ -226,8 +226,28 @@ class AiCore(
     perf.reluCount := perf.reluCount + 1.U
   }
 
-  when(mte2.io.busy) { perf.dmaTotalCycles := perf.dmaTotalCycles + 1.U }
-  when(cubeActive && (mte1.io.busy || mte2.io.busy)) {
+  val copyInActive = mte1.io.busy
+  val dmaActive = mte2.io.busy
+  val copyOutActive = mte3.io.busy
+
+  when(copyInActive) { perf.copyInCycles := perf.copyInCycles + 1.U }
+  when(dmaActive) { perf.dmaTotalCycles := perf.dmaTotalCycles + 1.U }
+  when(copyOutActive) { perf.copyOutCycles := perf.copyOutCycles + 1.U }
+
+  when(cubeActive && copyInActive) {
+    perf.copyInComputeOverlapCycles := perf.copyInComputeOverlapCycles + 1.U
+  }
+  when(cubeActive && dmaActive) {
+    perf.dmaComputeOverlapCycles := perf.dmaComputeOverlapCycles + 1.U
+  }
+  when(cubeActive && copyOutActive) {
+    perf.copyOutComputeOverlapCycles := perf.copyOutComputeOverlapCycles + 1.U
+  }
+  when(cubeActive && (copyInActive || dmaActive || copyOutActive)) {
+    perf.dataflowOverlapCycles := perf.dataflowOverlapCycles + 1.U
+  }
+
+  when(cubeActive && (copyInActive || dmaActive)) {
     perf.overlapCycles := perf.overlapCycles + 1.U
   }
 }

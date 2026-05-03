@@ -70,6 +70,7 @@
 - docs/npu/architecture.md - NPU 架构
 - docs/npu/dma_overlap.md - DMA Overlap 技术
 - docs/npu/performance_measurement.md - 性能测量
+- docs/npu/ascend_dataflow_design.md - 昇腾式 CopyIn/Compute/CopyOut 数据流思想
 
 **GPU 文档：**
 - docs/gpu/architecture.md - GPU 架构

@@ -102,7 +102,8 @@ HALT                       ; 当前 block 完成，物理核可领取下一个 b
 - **L0C 累加模式**：`MATMUL` bit 27 支持 `L0C := L0C + L0A × L0B`
 - **16×16 分形 tile 抽象**：Cube 一次消费一个 16×16 tile，软件侧 helper 负责 pack/unpack 和尾块 padding
 - **PE MAC 两级流水**：PE 内部把乘法和加法拆成两级，SystolicArray 按 `PeMacLatency=2` 对齐 activation skew
-- 详见 [DMA Overlap 优化文档](dma_overlap.md)、[CubeCore 真实化优化记录](cubecore_realism_optimization.md)、[Cube 分形 Tile 格式](fractal_tile_format.md) 和 [PE MAC 流水化](pe_mac_pipeline.md)
+- **数据流可观测性**：PerfCounters 拆分 CopyIn/MTE2/CopyOut 周期和各阶段与 Cube 的重叠周期
+- 详见 [DMA Overlap 优化文档](dma_overlap.md)、[CubeCore 真实化优化记录](cubecore_realism_optimization.md)、[Cube 分形 Tile 格式](fractal_tile_format.md)、[PE MAC 流水化](pe_mac_pipeline.md) 和 [昇腾式数据流设计思想](ascend_dataflow_design.md)
 
 ### 与真实昇腾存储层次的映射
 
@@ -157,7 +158,7 @@ Weight-Stationary 16×16 收缩阵列，计算 C = A × W (INT8 → INT32)。
 
 ---
 
-## 6. 性能计数器 (per-core × 21)
+## 6. 性能计数器 (per-core × 28)
 
 | 计数器 | 含义 |
 |--------|------|
@@ -168,11 +169,15 @@ Weight-Stationary 16×16 收缩阵列，计算 C = A × W (INT8 → INT32)。
 | bubbleCycles | Scalar 等待 Cube/Vector/DMA 的周期 |
 | ubReads / ubWrites | UB 访存次数 |
 | dmaLoadCount / dmaStoreCount / dmaTotalCycles | MTE2 DMA 统计 |
-| overlapCycles | CubeCore 计算与 MTE1/MTE2 传输重叠周期 |
+| copyInCycles / copyOutCycles | MTE1 CopyIn 与 MTE3 CopyOut 周期 |
+| copyInComputeOverlapCycles / dmaComputeOverlapCycles / copyOutComputeOverlapCycles | CopyIn、MTE2、CopyOut 分别与 Cube 重叠的周期 |
+| dataflowOverlapCycles | Cube 与任一 MTE 同时活跃的周期 |
+| overlapCycles | 兼容旧文档的 Cube 与 MTE1/MTE2 重叠周期 |
 
 **派生指标**：
 - Cube 利用率 = cubeCompute / cubeTotal
 - DMA 占比 = dmaCycles / total
+- 数据流重叠率 = dataflowOverlap / (copyIn + dma + copyOut)
 
 ---
 
